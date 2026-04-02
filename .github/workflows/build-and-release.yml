@@ -24,12 +24,6 @@ env:
 jobs:
   build-macos-arm64:
     runs-on: macos-latest
-    env:
-      CSC_LINK: ${{ secrets.CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -139,9 +133,22 @@ jobs:
         working-directory: electron
         run: npm install
 
-      - name: Build Electron dmg/pkg (arm64 only)
+      - name: Build Electron dmg/pkg (arm64 only, unsigned for main/pr)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         shell: bash
         working-directory: electron
+        run: npm run dist:mac:arm64 -- --config.mac.identity=null
+
+      - name: Build Electron dmg/pkg (arm64 only, signed for tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        working-directory: electron
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: npm run dist:mac:arm64
 
       - name: Collect arm64 packages
