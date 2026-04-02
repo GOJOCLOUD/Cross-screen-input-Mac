@@ -1,0 +1,19 @@
+Run npm run dist:win
+
+> kpsr-desktop@1.0.0 dist:win
+> electron-builder --win --x64
+
+  • electron-builder  version=25.1.8 os=10.0.26100
+  • artifacts will be published if draft release exists  reason=CI detected
+  • loaded configuration  file=package.json ("build" field)
+  • executing @electron/rebuild  electronVersion=33.4.11 arch=x64 buildFromSource=false appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=win32 arch=x64 electron=33.4.11 appOutDir=dist\win-unpacked
+  • downloading     url=https://github.com/electron/electron/releases/download/v33.4.11/electron-v33.4.11-win32-x64.zip size=115 MB parts=8
+  • downloaded      url=https://github.com/electron/electron/releases/download/v33.4.11/electron-v33.4.11-win32-x64.zip duration=627ms
+  • updating asar integrity executable resource  executablePath=dist\win-unpacked\KPSR跨屏输入.exe
+  • signing with signtool.exe  path=dist\win-unpacked\resources\backend\kpsr-backend.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  ⨯ image D:\a\Cross-screen-input-v1\Cross-screen-input-v1\electron\build\icon.ico must be at least 256x256
+Error: Process completed with exit code 1.

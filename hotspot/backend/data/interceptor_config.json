@@ -1,0 +1,20 @@
+{
+  "enabled": false,
+  "rules": [],
+  "blocked_endpoints": [],
+  "allowed_endpoints": [
+    "/api/activation",
+    "/api/interceptor",
+    "/api/desktop",
+    "/api/clipboard",
+    "/api/shortcut",
+    "/api/button-config",
+    "/api/mouse",
+    "/api/mouse-config",
+    "/api/mouse-listener",
+    "/api/logs",
+    "/api/monitor",
+    "/health"
+  ],
+  "log_enabled": true
+}

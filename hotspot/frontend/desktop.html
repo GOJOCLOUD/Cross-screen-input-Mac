@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>跨屏输入</title>
+    <link rel="stylesheet" href="/frontend/css/desktop.css">
+    <script src="/frontend/js/lib/qrcode.min.js"></script>
+</head>
+<body class="eula-pending">
+    <!-- 用户协议遮罩层 -->
+    <div id="agreementModal" class="agreement-modal" style="display: none;">
+        <div class="agreement-overlay"></div>
+        <div class="agreement-content">
+            <div class="agreement-header">
+                <h2>用户协议</h2>
+            </div>
+            <div class="agreement-body">
+                <iframe src="/frontend/user-agreement.html" frameborder="0"></iframe>
+            </div>
+            <div class="agreement-footer">
+                <button id="disagreeBtn" class="agreement-btn disagree">不同意</button>
+                <button id="agreeBtn" class="agreement-btn agree">同意</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <header class="header">
+            <h1 class="title">跨屏输入</h1>
+            <p class="version">v1.0</p>
+        </header>
+
+        <!-- 二维码 -->
+        <div class="card">
+            <div class="card-title">手机扫码访问</div>
+            <div class="qrcode-wrapper">
+                <div id="qrcode"></div>
+                <p class="qrcode-tip">请确保手机与电脑在同一私有网络（手机热点或同一路由器 Wi‑Fi 均可），扫码或复制链接访问 <button class="agreement-link-btn" id="agreementLinkBtn" title="查看用户协议">?</button></p>
+            </div>
+        </div>
+
+        <!-- 访问链接 -->
+        <div class="card">
+            <div class="card-title">访问链接</div>
+            <div class="link-row">
+                <div class="link-display" id="linkDisplay">获取中...</div>
+                <button class="copy-btn" id="copyBtn">复制</button>
+            </div>
+            <div class="copy-feedback" id="copyFeedback">已复制</div>
+        </div>
+
+        <!-- 服务状态 -->
+        <div class="card">
+            <div class="card-title">服务状态</div>
+            <div class="status-list">
+                <div class="status-row">
+                    <span class="status-label">服务器</span>
+                    <span class="status-value">
+                        <span class="status-dot checking" id="serverDot"></span>
+                        <span id="serverText">检查中</span>
+                    </span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">端口</span>
+                    <span class="status-value" id="portText">--</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">本机 IPv4</span>
+                    <span class="status-value">
+                        <span class="status-dot checking" id="hotspotDot"></span>
+                        <span id="hotspotText">检查中</span>
+                    </span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">鼠标监听</span>
+                    <span class="status-value">
+                        <span class="status-dot checking" id="mouseDot"></span>
+                        <span id="mouseText">检查中</span>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- HTTP 端口（公司网等可自定义，避免同网段多台电脑冲突） -->
+        <div class="card">
+            <div class="card-title">HTTP 服务端口</div>
+            <ul class="info-list" style="margin-bottom:12px;">
+                <li>同一局域网多台电脑同时使用时，可为每台设置<strong>不同端口</strong>（默认 2345）。</li>
+                <li>修改后需<strong>完全退出并重新启动</strong>本程序后才会在新端口监听。</li>
+            </ul>
+            <div class="status-row">
+                <span class="status-label">当前监听</span>
+                <span class="status-value" id="listeningPortText">--</span>
+            </div>
+            <div class="card-title" style="margin-top:16px; font-size:14px; font-weight:500; color:#666;">保存为新端口</div>
+            <div class="link-row" style="margin-top:8px;">
+                <input type="number" class="link-display" id="portInput" min="1024" max="65535" placeholder="1024–65535" style="text-align:left;">
+                <button class="copy-btn" id="savePortBtn" type="button">保存</button>
+            </div>
+            <div class="copy-feedback" id="portSaveMsg"></div>
+        </div>
+
+        <!-- 网络说明（仅两种连接方式：热点 / 私有网络，无模式切换） -->
+        <div class="card">
+            <div class="card-title">网络说明</div>
+            <ul class="info-list">
+                <li><strong>手机热点</strong>：电脑连接手机热点，手机与电脑在同一网段即可。</li>
+                <li><strong>私有网络</strong>：电脑与手机连接同一路由器 Wi‑Fi 或其它局域网，同一网段即可。</li>
+                <li>软件按当前网络自动工作，<strong>无需、也不提供任何「模式切换」</strong>。</li>
+            </ul>
+        </div>
+
+        <!-- 使用说明 -->
+        <div class="card">
+            <div class="card-title">使用说明</div>
+            <ol class="info-list">
+                <li>任选其一：开手机热点让电脑连上，或让电脑与手机连同一 Wi‑Fi（私有网络）</li>
+                <li>在本页扫码或复制链接，在手机浏览器中打开</li>
+                <li>在手机端输入内容，可同步到电脑剪贴板等功能（视页面功能而定）</li>
+            </ol>
+        </div>
+
+        <!-- 激活验证 -->
+        <div class="card" id="activationCard">
+            <div class="card-title">激活验证</div>
+            <div class="status-list">
+                <div class="status-row">
+                    <span class="status-label">激活状态</span>
+                    <span class="status-value">
+                        <span class="status-dot" id="activationDot"></span>
+                        <span id="activationText">检查中</span>
+                    </span>
+                </div>
+                <div class="status-row" id="activatedStatus" style="display: none;">
+                    <span class="status-label">状态信息</span>
+                    <span class="status-value">您的设备已成功激活，所有功能可用</span>
+                </div>
+                <div class="status-row" id="activatedAction" style="display: none;">
+                    <span class="status-label">操作</span>
+                    <span class="status-value">
+                        <button class="deactivate-btn" id="deactivateBtn">取消激活</button>
+                    </span>
+                </div>
+                <div class="status-row" id="unactivatedStatus">
+                    <span class="status-label">状态信息</span>
+                    <span class="status-value" id="unactivatedStatusText">请输入激活码以使用全部功能</span>
+                </div>
+                <div class="status-row" id="uuidRow">
+                    <span class="status-label">设备UUID</span>
+                    <span class="status-value">
+                        <div class="uuid-display" id="uuidDisplay">获取中...</div>
+                        <button class="copy-btn" id="copyUuidBtn">复制</button>
+                    </span>
+                </div>
+                <div class="status-row" id="licenseRow">
+                    <span class="status-label">激活码</span>
+                    <span class="status-value">
+                        <input type="text" class="license-input" id="licenseInput" placeholder="请输入激活码">
+                        <button class="activate-btn" id="activateBtn">激活</button>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            跨屏输入 © 2026
+        </footer>
+    </div>
+
+    <script>
+        /** 统一提示：不区分「模式」，只说明两种连接方式（热点 / 私有网络） */
+        const TIP_UNIFIED = '请确保手机与电脑在同一私有网络（手机热点或同一路由器 Wi‑Fi 均可），扫码或复制链接访问';
+        /** 未激活：与链接/二维码一致，且不暴露端口/IP（不再区分网段） */
+        const MSG_NEED_ACTIVATE = '请激活后使用手机代码';
+
+        /** 必须先于激活/二维码逻辑：从服务端读取是否已同意协议（不依赖 localStorage） */
+        async function ensureEulaAccepted() {
+            try {
+                const r = await fetch('/api/desktop/eula-status');
+                const d = await r.json();
+                if (d.accepted) {
+                    document.body.classList.remove('eula-pending');
+                    setupAgreementViewer();
+                    return true;
+                }
+            } catch (e) {
+                console.warn('[KPSR] eula-status 不可用，跳过协议门', e);
+                document.body.classList.remove('eula-pending');
+                return true;
+            }
+            const modal = document.getElementById('agreementModal');
+            const agreeBtn = document.getElementById('agreeBtn');
+            const disagreeBtn = document.getElementById('disagreeBtn');
+            if (!modal || !agreeBtn || !disagreeBtn) {
+                document.body.classList.remove('eula-pending');
+                return true;
+            }
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+            return await new Promise((resolve) => {
+                const onAgree = async () => {
+                    try {
+                        const r = await fetch('/api/desktop/eula-accept', { method: 'POST' });
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                    } catch (err) {
+                        console.error(err);
+                        alert('保存协议状态失败，请重试');
+                        return;
+                    }
+                    modal.style.display = 'none';
+                    document.body.style.overflow = '';
+                    document.body.classList.remove('eula-pending');
+                    agreeBtn.removeEventListener('click', onAgree);
+                    disagreeBtn.removeEventListener('click', onDisagree);
+                    setupAgreementViewer();
+                    resolve(true);
+                };
+                const onDisagree = () => {
+                    agreeBtn.removeEventListener('click', onAgree);
+                    disagreeBtn.removeEventListener('click', onDisagree);
+                    if (window.kpsrDesktop && typeof window.kpsrDesktop.quitApp === 'function') {
+                        window.kpsrDesktop.quitApp();
+                    } else if (confirm('必须同意用户协议才能使用。是否关闭？')) {
+                        window.close();
+                    }
+                    resolve(false);
+                };
+                agreeBtn.addEventListener('click', onAgree);
+                disagreeBtn.addEventListener('click', onDisagree);
+            });
+        }
+
+        /** 协议通过后的「查看协议」交互：与首次强制同意分离，避免与激活遮罩冲突 */
+        function setupAgreementViewer() {
+            const modal = document.getElementById('agreementModal');
+            const agreeBtn = document.getElementById('agreeBtn');
+            const disagreeBtn = document.getElementById('disagreeBtn');
+            const linkBtn = document.getElementById('agreementLinkBtn');
+            if (!modal || !agreeBtn || !disagreeBtn) return;
+            agreeBtn.textContent = '知道了';
+            disagreeBtn.textContent = '关闭';
+            const close = () => {
+                modal.style.display = 'none';
+                document.body.style.overflow = '';
+            };
+            agreeBtn.onclick = close;
+            disagreeBtn.onclick = close;
+            if (linkBtn) {
+                linkBtn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    agreeBtn.textContent = '知道了';
+                    disagreeBtn.textContent = '关闭';
+                    modal.style.display = 'flex';
+                    document.body.style.overflow = 'hidden';
+                };
+            }
+        }
+
+        function updateLocalIpRowFromAccess(data) {
+            const dot = document.getElementById('hotspotDot');
+            const text = document.getElementById('hotspotText');
+            if (!text || !dot) return;
+            let ip = data.hotspot_ip;
+            if (!ip && data.phone_url && /^https?:\/\//i.test(String(data.phone_url))) {
+                try {
+                    const u = new URL(data.phone_url);
+                    if (u.hostname && u.hostname !== 'localhost') ip = u.hostname;
+                } catch (e) { /* ignore */ }
+            }
+            if (ip) {
+                dot.className = 'status-dot online';
+                text.textContent = ip;
+            } else {
+                dot.className = 'status-dot offline';
+                text.textContent = '未检测到可用 IPv4';
+            }
+        }
+
+        async function loadAccessInfo() {
+            try {
+                const res = await fetch('/api/desktop/access-info');
+                const data = await res.json();
+                const linkDisplay = document.getElementById('linkDisplay');
+                const tip = document.querySelector('.qrcode-tip');
+                updateLocalIpRowFromAccess(data);
+
+                const url = data.phone_url || '';
+                const bad = !url || url.indexOf('未检测') !== -1 || url.indexOf('请先') !== -1;
+
+                if (!bad) {
+                    linkDisplay.textContent = url;
+                    generateQRCode(data.qrcode_url || url);
+                    if (tip) {
+                        tip.textContent = TIP_UNIFIED;
+                        tip.style.color = '';
+                    }
+                } else {
+                    linkDisplay.textContent = url || '请检查本机网络，确保已获得局域网 IP';
+                    const qrcodeElement = document.getElementById('qrcode');
+                    if (qrcodeElement) {
+                        qrcodeElement.innerHTML = '<p style="color:#999;padding:40px;font-size:14px;">等待本机获得可用地址…</p>';
+                    }
+                    if (tip) tip.textContent = TIP_UNIFIED;
+                }
+            } catch (e) {
+                const linkDisplay = document.getElementById('linkDisplay');
+                if (linkDisplay) linkDisplay.textContent = '获取失败';
+                console.error('加载访问信息失败:', e);
+            }
+        }
+
+        function generateQRCode(url) {
+            const container = document.getElementById('qrcode');
+            container.innerHTML = '';
+            try {
+                new QRCode(container, {
+                    text: url,
+                    width: 180,
+                    height: 180,
+                    colorDark: '#000',
+                    colorLight: '#fff',
+                    correctLevel: QRCode.CorrectLevel.M
+                });
+            } catch (e) {
+                container.innerHTML = '<p style="color:#999;padding:40px;">二维码生成失败</p>';
+                console.error('二维码生成失败:', e);
+            }
+        }
+
+        async function loadPortSettings() {
+            const listenEl = document.getElementById('listeningPortText');
+            const input = document.getElementById('portInput');
+            try {
+                const res = await fetch('/api/desktop/settings');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                if (listenEl) listenEl.textContent = data.listening_port != null ? String(data.listening_port) : '--';
+                if (input && data.configured_port != null) input.value = String(data.configured_port);
+            } catch (e) {
+                console.error('加载端口设置失败:', e);
+                if (listenEl) listenEl.textContent = '—';
+            }
+        }
+
+        function initPortSettings() {
+            const btn = document.getElementById('savePortBtn');
+            const msg = document.getElementById('portSaveMsg');
+            if (!btn) return;
+
+            function showPortMsg(text, isError) {
+                if (!msg) return;
+                msg.textContent = text;
+                msg.style.color = isError ? '#dc2626' : '#16a34a';
+                msg.classList.add('show');
+                if (msg._hideTimer) clearTimeout(msg._hideTimer);
+                msg._hideTimer = setTimeout(() => {
+                    msg.classList.remove('show');
+                }, isError ? 4000 : 8000);
+            }
+
+            btn.addEventListener('click', async () => {
+                const input = document.getElementById('portInput');
+                const raw = input && input.value != null ? String(input.value).trim() : '';
+                const p = parseInt(raw, 10);
+                if (!Number.isFinite(p) || p < 1024 || p > 65535) {
+                    showPortMsg('请输入 1024–65535 之间的整数', true);
+                    return;
+                }
+                try {
+                    const res = await fetch('/api/desktop/port', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ http_port: p }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        let detail = data.detail || '保存失败';
+                        if (Array.isArray(detail)) {
+                            detail = detail.map((x) => (x && x.msg) || JSON.stringify(x)).join('；');
+                        }
+                        showPortMsg(String(detail), true);
+                        return;
+                    }
+                    showPortMsg(data.message || '已保存，请完全退出并重启应用后生效', false);
+                } catch (e) {
+                    console.error(e);
+                    showPortMsg('保存失败，请检查网络', true);
+                }
+            });
+        }
+
+        async function loadStatus() {
+            try {
+                const res = await fetch('/api/desktop/status');
+                const data = await res.json();
+                setStatus('serverDot', 'serverText', data.server_running, '运行中', '已停止');
+                document.getElementById('portText').textContent = data.port || '--';
+                if (data.hotspot_connected && data.hotspot_ip) {
+                    setStatus('hotspotDot', 'hotspotText', true, data.hotspot_ip, '未连接');
+                } else if (data.hotspot_connected && !data.hotspot_ip) {
+                    /* 私有网络/局域网场景：接口可能不返回 hotspot_ip，本机 IPv4 由 loadAccessInfo 更新 */
+                } else {
+                    setStatus('hotspotDot', 'hotspotText', false, '', '未连接');
+                }
+                setStatus('mouseDot', 'mouseText', data.mouse_listener_status, '运行中', '已停止');
+            } catch (e) {
+                console.error('加载状态失败:', e);
+            }
+        }
+
+        function setStatus(dotId, textId, isOnline, onlineText, offlineText) {
+            const dot = document.getElementById(dotId);
+            const text = document.getElementById(textId);
+            if (dot) dot.className = 'status-dot ' + (isOnline ? 'online' : 'offline');
+            if (text) text.textContent = isOnline ? onlineText : offlineText;
+        }
+
+        async function loadActivationStatus() {
+            try {
+                const response = await fetch('/api/activation/status');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+
+                const activationDot = document.getElementById('activationDot');
+                const activationText = document.getElementById('activationText');
+                if (!activationDot || !activationText) return;
+
+                const needBlock = !data.activated;
+                const unactivatedMsg = document.getElementById('unactivatedStatusText');
+                if (data.message && unactivatedMsg) unactivatedMsg.textContent = data.message;
+
+                if (data.activated) {
+                    activationDot.className = 'status-dot online';
+                    activationText.textContent = '已激活';
+                    document.getElementById('activatedStatus').style.display = 'block';
+                    document.getElementById('activatedAction').style.display = 'block';
+                    document.getElementById('unactivatedStatus').style.display = 'none';
+                    document.getElementById('uuidRow').style.display = 'none';
+                    document.getElementById('licenseRow').style.display = 'none';
+
+                    const qrcodeElement = document.getElementById('qrcode');
+                    const qrcodeTip = document.querySelector('.qrcode-tip');
+                    if (qrcodeElement) qrcodeElement.style.filter = 'none';
+                    if (qrcodeTip) {
+                        qrcodeTip.textContent = TIP_UNIFIED;
+                        qrcodeTip.style.color = '';
+                    }
+                    const linkDisplay = document.getElementById('linkDisplay');
+                    if (linkDisplay) {
+                        linkDisplay.style.display = 'block';
+                        linkDisplay.style.color = '';
+                    }
+                    document.getElementById('copyBtn').style.display = 'block';
+
+                    await loadAccessInfo();
+                    await loadStatus();
+                } else {
+                    activationDot.className = 'status-dot offline';
+                    activationText.textContent = '未激活';
+                    document.getElementById('activatedStatus').style.display = 'none';
+                    document.getElementById('activatedAction').style.display = 'none';
+                    document.getElementById('unactivatedStatus').style.display = 'block';
+                    document.getElementById('uuidRow').style.display = 'flex';
+                    document.getElementById('licenseRow').style.display = 'flex';
+
+                    const uuidDisplay = document.getElementById('uuidDisplay');
+                    if (uuidDisplay) uuidDisplay.textContent = data.uuid || '获取失败';
+
+                    if (needBlock) {
+                        const qrcodeElement = document.getElementById('qrcode');
+                        const qrcodeTip = document.querySelector('.qrcode-tip');
+                        if (qrcodeElement) {
+                            qrcodeElement.style.filter = 'none';
+                            qrcodeElement.innerHTML = '<p style="color:#999;padding:40px;font-size:14px;text-align:center;">' + MSG_NEED_ACTIVATE + '</p>';
+                        }
+                        if (qrcodeTip) {
+                            qrcodeTip.textContent = MSG_NEED_ACTIVATE;
+                            qrcodeTip.style.color = '#999';
+                        }
+                        const linkDisplay = document.getElementById('linkDisplay');
+                        if (linkDisplay) {
+                            linkDisplay.textContent = MSG_NEED_ACTIVATE;
+                            linkDisplay.style.color = '#999';
+                        }
+                        document.getElementById('copyBtn').style.display = 'none';
+                        document.getElementById('portText').textContent = '激活后可见';
+                        const ipEl = document.getElementById('hotspotText');
+                        const ipDot = document.getElementById('hotspotDot');
+                        if (ipEl) ipEl.textContent = '激活后可见';
+                        if (ipDot) ipDot.className = 'status-dot offline';
+                        try {
+                            const sr = await fetch('/api/desktop/status');
+                            const sd = await sr.json();
+                            setStatus('serverDot', 'serverText', sd.server_running, '运行中', '已停止');
+                            setStatus('mouseDot', 'mouseText', sd.mouse_listener_status, '运行中', '已停止');
+                        } catch (e) { /* ignore */ }
+                    } else {
+                        const qrcodeElement = document.getElementById('qrcode');
+                        const qrcodeTip = document.querySelector('.qrcode-tip');
+                        if (qrcodeElement) qrcodeElement.style.filter = 'none';
+                        if (qrcodeTip) {
+                            qrcodeTip.textContent = TIP_UNIFIED;
+                            qrcodeTip.style.color = '';
+                        }
+                        const linkDisplay = document.getElementById('linkDisplay');
+                        if (linkDisplay) {
+                            linkDisplay.style.display = 'block';
+                            linkDisplay.style.color = '';
+                        }
+                        document.getElementById('copyBtn').style.display = 'block';
+                        await loadAccessInfo();
+                        await loadStatus();
+                    }
+                }
+            } catch (error) {
+                console.error('加载激活状态失败:', error);
+                const activationDot = document.getElementById('activationDot');
+                const activationText = document.getElementById('activationText');
+                if (activationDot) activationDot.className = 'status-dot offline';
+                if (activationText) activationText.textContent = '错误';
+                const uuidDisplay = document.getElementById('uuidDisplay');
+                if (uuidDisplay) uuidDisplay.textContent = '获取失败';
+            }
+        }
+
+        function initCopyBtn() {
+            const btn = document.getElementById('copyBtn');
+            const feedback = document.getElementById('copyFeedback');
+            if (!btn) return;
+            btn.addEventListener('click', async () => {
+                const text = document.getElementById('linkDisplay').textContent;
+                if (!text || text === '获取中...' || text === '获取失败' || text.indexOf('激活') !== -1 || text === MSG_NEED_ACTIVATE) return;
+                try {
+                    await navigator.clipboard.writeText(text);
+                    if (feedback) {
+                        feedback.classList.add('show');
+                        setTimeout(() => feedback.classList.remove('show'), 1500);
+                    }
+                } catch (e) {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.cssText = 'position:fixed;left:-9999px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    if (feedback) {
+                        feedback.classList.add('show');
+                        setTimeout(() => feedback.classList.remove('show'), 1500);
+                    }
+                }
+            });
+        }
+
+        function initActivationButtons() {
+            const activateBtn = document.getElementById('activateBtn');
+            if (activateBtn) {
+                activateBtn.addEventListener('click', async () => {
+                    const licenseKey = document.getElementById('licenseInput').value.trim();
+                    if (!licenseKey) {
+                        alert('请输入激活码');
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/api/activation/activate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ license_key: licenseKey })
+                        });
+                        const data = await res.json();
+                        if (data.status === 'success') {
+                            alert('激活成功');
+                            await loadActivationStatus();
+                        } else {
+                            alert('激活失败: ' + (data.message || '未知错误'));
+                        }
+                    } catch (e) {
+                        console.error('激活失败:', e);
+                        alert('激活失败，请检查网络连接');
+                    }
+                });
+            }
+            const deactivateBtn = document.getElementById('deactivateBtn');
+            if (deactivateBtn) {
+                deactivateBtn.addEventListener('click', async () => {
+                    if (!confirm('确定要取消激活吗？')) return;
+                    try {
+                        const res = await fetch('/api/activation/deactivate', { method: 'POST' });
+                        const data = await res.json();
+                        if (data.status === 'success') {
+                            alert('已取消激活');
+                            await loadActivationStatus();
+                        } else {
+                            alert('取消激活失败: ' + (data.message || '未知错误'));
+                        }
+                    } catch (e) {
+                        console.error('取消激活失败:', e);
+                        alert('取消激活失败，请检查网络连接');
+                    }
+                });
+            }
+            const copyUuidBtn = document.getElementById('copyUuidBtn');
+            if (copyUuidBtn) {
+                copyUuidBtn.addEventListener('click', async () => {
+                    const uuid = document.getElementById('uuidDisplay').textContent;
+                    if (!uuid || uuid === '获取中...' || uuid === '获取失败') return;
+                    try {
+                        await navigator.clipboard.writeText(uuid);
+                        alert('UUID已复制到剪贴板');
+                    } catch (e) {
+                        const ta = document.createElement('textarea');
+                        ta.value = uuid;
+                        ta.style.cssText = 'position:fixed;left:-9999px';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        alert('UUID已复制到剪贴板');
+                    }
+                });
+            }
+        }
+
+        /** 不再定时轮询激活状态，避免界面闪烁；仅在打开页面及激活/取消激活后刷新 */
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) return;
+            loadStatus();
+            loadAccessInfo();
+        });
+
+        (async function boot() {
+            try {
+                const eulaOk = await ensureEulaAccepted();
+                if (!eulaOk) return;
+
+                initCopyBtn();
+                initActivationButtons();
+                initPortSettings();
+                await loadPortSettings();
+                await loadActivationStatus();
+            } catch (e) {
+                console.error('初始化失败:', e);
+            }
+        })();
+    </script>
+</body>
+</html>

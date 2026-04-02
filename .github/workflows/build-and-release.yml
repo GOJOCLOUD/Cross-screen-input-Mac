@@ -1,0 +1,516 @@
+# 1) PyInstaller 打包后端为 kpsr-backend.exe
+# 2) Electron + electron-builder 生成 Windows 安装包与便携版
+# 推 tag v* 时发布 Release（ZIP 内含两个 .exe）
+
+name: Build Electron (Windows / macOS)
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-electron-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  BACKEND_EXE_NAME: "kpsr-backend"
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+jobs:
+  build-windows-electron:
+    # Mac 专用仓库只跑 macOS job，节省 Runner 且避免与 dev 预发布互相覆盖
+    if: github.repository != 'GOJOCLOUD/Cross-screen-input-Mac'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: hotspot/backend/requirements.txt
+
+      - name: Install Python deps + PyInstaller
+        shell: pwsh
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r hotspot/backend/requirements.txt
+          pip install "pyinstaller>=6.0"
+
+      - name: Build backend EXE (PyInstaller onefile)
+        shell: pwsh
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          Set-Location hotspot/backend
+
+          $iconArgs = @()
+          $ico = Join-Path (Resolve-Path "../..").Path "app_icon.ico"
+          if (Test-Path $ico) {
+            $iconArgs += "--icon"
+            $iconArgs += $ico
+            Write-Host "Using icon: $ico"
+          } else {
+            Write-Warning "app_icon.ico not found at repo root — building without custom icon."
+          }
+
+          $dataSep = ";"
+          $name = $env:BACKEND_EXE_NAME
+          $pyiArgs = @(
+            "--onefile"
+            "--noconfirm"
+            "--clean"
+            "--name", $name
+          ) + $iconArgs + @(
+            "--hidden-import", "uvicorn"
+            "--hidden-import", "uvicorn.logging"
+            "--hidden-import", "uvicorn.loops"
+            "--hidden-import", "uvicorn.loops.auto"
+            "--hidden-import", "uvicorn.protocols"
+            "--hidden-import", "uvicorn.protocols.http"
+            "--hidden-import", "uvicorn.protocols.http.auto"
+            "--hidden-import", "uvicorn.protocols.websockets"
+            "--hidden-import", "uvicorn.protocols.websockets.auto"
+            "--hidden-import", "pydantic"
+            "--hidden-import", "pydantic_settings"
+            "--hidden-import", "pydantic_core"
+            "--hidden-import", "fastapi"
+            "--hidden-import", "starlette"
+            "--hidden-import", "pynput"
+            "--hidden-import", "pynput.keyboard"
+            "--hidden-import", "pynput.mouse"
+            "--hidden-import", "pyperclip"
+            "--hidden-import", "PIL"
+            "--hidden-import", "psutil"
+            "--hidden-import", "websockets"
+            "--hidden-import", "websockets.legacy"
+            "--hidden-import", "websockets.legacy.server"
+            "--hidden-import", "websockets.legacy.client"
+            "--hidden-import", "python_multipart"
+            "--collect-all", "pynput"
+            "--collect-all", "fastapi"
+            "--collect-all", "starlette"
+            "--collect-all", "uvicorn"
+            "--add-data", "..\frontend${dataSep}frontend"
+            "--add-data", "data${dataSep}data"
+            "--add-data", "routes${dataSep}routes"
+            "--add-data", "utils${dataSep}utils"
+            "--add-data", "config.py${dataSep}."
+            "main.py"
+          )
+
+          pyinstaller @pyiArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify backend EXE
+        shell: pwsh
+        run: |
+          $exe = Join-Path "hotspot/backend/dist" "$($env:BACKEND_EXE_NAME).exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "Backend EXE not found: $exe"
+            exit 1
+          }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
+          Write-Host "Backend OK: $exe ($mb MB)"
+
+      - name: Stage backend for Electron
+        shell: pwsh
+        run: |
+          $destDir = "electron/resources/backend"
+          New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+          Copy-Item "hotspot/backend/dist/$($env:BACKEND_EXE_NAME).exe" -Destination "$destDir/kpsr-backend.exe" -Force
+          Remove-Item "$destDir/.gitkeep" -ErrorAction SilentlyContinue
+          Get-ChildItem $destDir
+
+      - name: Prepare app icon for Electron
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "electron/build" | Out-Null
+          # 优先使用 256x256 PNG 图标（满足 electron-builder 要求）
+          $iconSource = "hotspot/images/AppIcon.iconset/icon_256x256.png"
+          if (Test-Path $iconSource) {
+            Copy-Item $iconSource "electron/build/icon.png" -Force
+            Write-Host "Copied $iconSource -> electron/build/icon.png"
+          } elseif (Test-Path "app_icon.ico") {
+            # 备用：使用旧的 ico 文件
+            Copy-Item "app_icon.ico" "electron/build/icon.ico" -Force
+            Write-Host "Copied app_icon.ico -> electron/build/icon.ico"
+          } else {
+            Write-Warning "No suitable icon found — Electron will use default icon."
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: electron/package.json
+
+      - name: Install Electron dependencies
+        shell: pwsh
+        working-directory: electron
+        run: npm install
+
+      - name: Build Electron (NSIS + portable)
+        shell: pwsh
+        working-directory: electron
+        run: npm run dist:win
+
+      - name: List Electron dist
+        shell: pwsh
+        working-directory: electron
+        run: Get-ChildItem dist -Recurse | ForEach-Object { $_.FullName }
+
+      - name: Package release ZIP
+        shell: pwsh
+        run: |
+          # 正式 tag：v1.0.0 → 唯一 ZIP 名，便于 Release 存档
+          # main 等分支：固定 dev.zip 名，便于 dev-latest 预发布每次覆盖同一附件（避免 Release 里堆满历史文件）
+          $ref = $env:GITHUB_REF
+          $isVersionTag = $ref -match '^refs/tags/v(.+)$'
+          if ($isVersionTag) {
+            $version = $Matches[1]
+            $folder = "KPSR跨屏输入-Electron-v$version"
+            $zip = "$folder.zip"
+          } else {
+            $version = "dev (commit $($env:GITHUB_SHA.Substring(0,7)))"
+            $folder = "KPSR跨屏输入-Electron-dev"
+            $zip = "KPSR跨屏输入-Electron-dev.zip"
+          }
+          New-Item -ItemType Directory -Path $folder -Force | Out-Null
+
+          Get-ChildItem "electron/dist" -Filter "*.exe" | ForEach-Object {
+            Copy-Item $_.FullName -Destination (Join-Path $folder $_.Name) -Force
+          }
+
+          $lines = @(
+            "KPSR 跨屏输入 - Electron 桌面版（Windows x64）"
+            ""
+            "包含文件"
+            "- *Setup*.exe : 安装版（推荐，可开始菜单快捷方式）"
+            "- 另一 *.exe : 便携版（免安装，部分文件名为「KPSR跨屏输入 x.y.z.exe」）"
+            ""
+            "使用"
+            "1. 任选其一安装或解压运行"
+            "2. 启动后自动打开桌面窗口（本机 http://127.0.0.1:2345）"
+            "3. 手机与电脑同一 WiFi 时，浏览器打开 http://<电脑局域网IP>:2345/phone"
+            ""
+            "说明"
+            "- 关闭 Electron 窗口即退出并结束后台服务"
+            "- 若防火墙提示，请允许专用网络访问"
+            "- 首次启动若较慢：杀毒会扫描 kpsr-backend.exe，属正常现象（见仓库 electron/README）"
+            ""
+            "版本: $version"
+            "提交: $($env:GITHUB_SHA.Substring(0,7))"
+          )
+          $readme = $lines -join "`n"
+          $readme | Out-File -FilePath "$folder/使用说明.txt" -Encoding utf8
+
+          Compress-Archive -Path $folder -DestinationPath $zip -Force
+          Write-Host "Created $zip"
+          @(
+            "ELECTRON_ZIP=$zip"
+            "PKG_VERSION=$version"
+          ) | Set-Content -Path $env:GITHUB_ENV -Encoding utf8
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KPSR-Electron-build-${{ github.run_id }}
+          path: KPSR跨屏输入-Electron-*.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: KPSR跨屏输入-Electron-*.zip
+          name: KPSR 跨屏输入（Electron） ${{ github.ref_name }}
+          overwrite: true
+          body: |
+            ## Windows · Electron 桌面版（x64）
+
+            下载 **ZIP**，内含：
+            - **安装程序**（文件名含 `Setup`）
+            - **便携版**（单文件 exe，免安装）
+
+            启动后为独立桌面窗口，内置后端，无需单独安装 Python。
+
+            - 电脑端界面：由应用窗口打开（`http://127.0.0.1:2345`）
+            - 手机端：同局域网浏览器访问 `http://<电脑IP>:2345/phone`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # main 分支构建：Artifacts 需登录 GitHub 才能下，外链也不稳定。
+      # 同步发布「开发版」到固定 tag dev-latest-win，与 macOS 的 dev-latest-macos 分离，避免互相覆盖 Assets。
+      - name: Move dev-latest-win tag to current commit (main, not PR)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f dev-latest-win "${{ github.sha }}"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push -f origin dev-latest-win
+
+      - name: Publish dev pre-release (main, not PR)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-latest-win
+          name: "开发版 Windows（main 最新，自动覆盖）"
+          prerelease: true
+          make_latest: false
+          overwrite: true
+          files: KPSR跨屏输入-Electron-dev.zip
+          body: |
+            每次推送到 **main** 自动更新本页附件（固定文件名 `KPSR跨屏输入-Electron-dev.zip`）。
+
+            - 与 **Releases** 里 `v1.0.x` 正式包内容流程相同，仅未打版本标签。
+            - **不要**从 Actions 里下 Artifact 给最终用户（需登录、易失败）；请用本页 **Assets** 直链。
+            - macOS 开发版见预发布 **dev-latest-macos**。
+
+            首次启动较慢：Windows 可能首次扫描内置 `kpsr-backend.exe`，请见仓库 `electron/README.md`。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos-electron:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: hotspot/backend/requirements.txt
+
+      - name: Install Python deps + PyInstaller
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r hotspot/backend/requirements.txt
+          pip install "pyinstaller>=6.0"
+
+      - name: Build backend binary (PyInstaller onefile)
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          cd hotspot/backend
+          name="${BACKEND_EXE_NAME}"
+
+          pyinstaller \
+            --onefile \
+            --noconfirm \
+            --clean \
+            --name "${name}" \
+            --hidden-import uvicorn \
+            --hidden-import uvicorn.logging \
+            --hidden-import uvicorn.loops \
+            --hidden-import uvicorn.loops.auto \
+            --hidden-import uvicorn.protocols \
+            --hidden-import uvicorn.protocols.http \
+            --hidden-import uvicorn.protocols.http.auto \
+            --hidden-import uvicorn.protocols.websockets \
+            --hidden-import uvicorn.protocols.websockets.auto \
+            --hidden-import pydantic \
+            --hidden-import pydantic_settings \
+            --hidden-import pydantic_core \
+            --hidden-import fastapi \
+            --hidden-import starlette \
+            --hidden-import pynput \
+            --hidden-import pynput.keyboard \
+            --hidden-import pynput.mouse \
+            --hidden-import pyperclip \
+            --hidden-import PIL \
+            --hidden-import psutil \
+            --hidden-import websockets \
+            --hidden-import websockets.legacy \
+            --hidden-import websockets.legacy.server \
+            --hidden-import websockets.legacy.client \
+            --hidden-import python_multipart \
+            --collect-all pynput \
+            --collect-all fastapi \
+            --collect-all starlette \
+            --collect-all uvicorn \
+            --add-data "../frontend:frontend" \
+            --add-data "data:data" \
+            --add-data "routes:routes" \
+            --add-data "utils:utils" \
+            --add-data "config.py:." \
+            main.py
+
+      - name: Verify backend binary
+        shell: bash
+        run: |
+          bin="hotspot/backend/dist/${BACKEND_EXE_NAME}"
+          if [ ! -f "${bin}" ]; then
+            echo "Backend binary not found: ${bin}"
+            exit 1
+          fi
+          chmod +x "${bin}"
+          ls -lh "${bin}"
+
+      - name: Stage backend for Electron
+        shell: bash
+        run: |
+          dest_dir="electron/resources/backend"
+          mkdir -p "${dest_dir}"
+          cp -f "hotspot/backend/dist/${BACKEND_EXE_NAME}" "${dest_dir}/kpsr-backend"
+          rm -f "${dest_dir}/.gitkeep"
+          ls -la "${dest_dir}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: electron/package.json
+
+      - name: Install Electron dependencies
+        shell: bash
+        working-directory: electron
+        run: npm install
+
+      - name: Build Electron (DMG + ZIP)
+        shell: bash
+        working-directory: electron
+        run: npm run dist:mac
+
+      - name: List Electron dist
+        shell: bash
+        working-directory: electron
+        run: ls -la dist
+
+      - name: Package macOS release ZIP
+        shell: bash
+        run: |
+          ref="${GITHUB_REF}"
+          if [[ "${ref}" =~ ^refs/tags/v(.+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+            folder="KPSR跨屏输入-Electron-macOS-v${version}"
+            zip="${folder}.zip"
+          else
+            version="dev (commit ${GITHUB_SHA:0:7})"
+            folder="KPSR跨屏输入-Electron-macOS-dev"
+            zip="KPSR跨屏输入-Electron-macOS-dev.zip"
+          fi
+
+          mkdir -p "${folder}"
+          shopt -s nullglob
+          for f in electron/dist/*.dmg electron/dist/*.zip; do
+            cp -f "$f" "${folder}/"
+          done
+
+          cat > "${folder}/使用说明.txt" <<EOF
+          KPSR 跨屏输入 - Electron 桌面版（macOS）
+
+          包含文件
+          - .dmg：安装包
+          - .zip：便携包（首次打开可能需要系统授权）
+
+          使用
+          1. 下载后解压/安装并打开应用
+          2. 启动后自动打开桌面窗口（本机 http://127.0.0.1:2345）
+          3. 手机与电脑同一 WiFi 时，浏览器打开 http://<电脑局域网IP>:2345/phone
+
+          说明
+          - 首次启动可能需授权「辅助功能」（系统设置 -> 隐私与安全性）
+          - 如出现“来自未识别开发者”提示，可在系统设置中手动允许运行（签名公证完成后将优化）
+
+          版本: ${version}
+          提交: ${GITHUB_SHA:0:7}
+          EOF
+
+          ditto -c -k --sequesterRsrc --keepParent "${folder}" "${zip}"
+          echo "Created ${zip}"
+          {
+            echo "MAC_ELECTRON_ZIP=${zip}"
+            echo "PKG_VERSION=${version}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KPSR-macOS-Electron-build-${{ github.run_id }}
+          path: KPSR跨屏输入-Electron-macOS-*.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: KPSR跨屏输入-Electron-macOS-*.zip
+          name: KPSR 跨屏输入（Electron） ${{ github.ref_name }}
+          overwrite: true
+          body: |
+            ## macOS · Electron 桌面版
+
+            下载 **ZIP**，内含：
+            - **DMG 安装包**
+            - **ZIP 便携包**
+
+            启动后为独立桌面窗口，内置后端，无需单独安装 Python。
+
+            - 电脑端界面：由应用窗口打开（`http://127.0.0.1:2345`）
+            - 手机端：同局域网浏览器访问 `http://<电脑IP>:2345/phone`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move dev-latest-macos tag to current commit (main, not PR)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f dev-latest-macos "${{ github.sha }}"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push -f origin dev-latest-macos
+
+      - name: Publish dev pre-release (main, not PR)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-latest-macos
+          name: "开发版 macOS（main 最新，自动覆盖）"
+          prerelease: true
+          make_latest: false
+          overwrite: true
+          files: KPSR跨屏输入-Electron-macOS-dev.zip
+          body: |
+            每次推送到 **main** 自动更新 macOS 开发版附件（固定文件名 `KPSR跨屏输入-Electron-macOS-dev.zip`）。
+
+            - 与正式版流程一致，但未签名公证，首次打开可能需要手动允许。
+            - 电脑端窗口打开本地服务：`http://127.0.0.1:2345`
+            - 手机端：`http://<电脑IP>:2345/phone`
+            - Windows 开发版见预发布 **dev-latest-win**（本仓库若为 Mac 专用则仅构建 macOS）。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

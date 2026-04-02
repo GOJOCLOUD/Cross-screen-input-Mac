@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# 开发环境用户设置（端口等）
+hotspot/.kpsr_user/
+
+# 后端 PyInstaller 输出 / 构建产物
+hotspot/backend/dist/
+hotspot/backend/build/
+*.spec.bak
+
+# Electron
+electron/node_modules/
+electron/dist/
