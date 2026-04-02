@@ -2,7 +2,10 @@
 
 # FastAPI框架
 fastapi
-uvicorn[standard]
+# 不用 uvicorn[standard]：watchfiles/uvloop 等含单架构原生扩展，
+# macOS 上 PyInstaller --target-architecture universal2 会报 IncompatibleBinaryArchError。
+# 运行时未开 --reload，无需 watchfiles；性能略低于 httptools/uvloop，可接受。
+uvicorn
 
 # 剪贴板操作
 pyperclip

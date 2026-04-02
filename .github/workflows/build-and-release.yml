@@ -330,6 +330,8 @@ jobs:
             --clean \
             --target-architecture universal2 \
             --name "${name}" \
+            --exclude-module watchfiles \
+            --exclude-module uvloop \
             --hidden-import uvicorn \
             --hidden-import uvicorn.logging \
             --hidden-import uvicorn.loops \
