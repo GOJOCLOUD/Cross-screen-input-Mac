@@ -492,7 +492,6 @@ if is_mac:
     from Quartz import (
         CGEventTapCreate, CGEventTapEnable, CGEventTapIsEnabled,
         kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
-        kCGEventTapOptionListenOnly,
         CGEventMaskBit,
         kCGEventLeftMouseDown,
         kCGEventRightMouseDown,
@@ -538,16 +537,18 @@ def check_accessibility_permission() -> bool:
         permission_message = "当前平台无需辅助功能权限"
         return True
     try:
-        # 尝试创建一个测试用的事件 tap
-        test_tap = CGEventTapCreate(
-            kCGSessionEventTap,
-            kCGHeadInsertEventTap,
-            kCGEventTapOptionListenOnly,  # 只监听，权限要求更低
-            _mac_mouse_event_mask(),
-            lambda *args: args[2],  # 空回调
-            None
-        )
-        if test_tap is not None:
+        # 使用静默权限检测，避免在应用启动阶段触发系统授权弹窗。
+        trusted = False
+        if hasattr(Quartz, "AXIsProcessTrustedWithOptions") and hasattr(Quartz, "kAXTrustedCheckOptionPrompt"):
+            trusted = bool(
+                Quartz.AXIsProcessTrustedWithOptions(
+                    {Quartz.kAXTrustedCheckOptionPrompt: False}
+                )
+            )
+        elif hasattr(Quartz, "AXIsProcessTrusted"):
+            trusted = bool(Quartz.AXIsProcessTrusted())
+
+        if trusted:
             has_permission = True
             permission_message = "已获得辅助功能权限，鼠标侧键功能可用"
             app_logger.info(permission_message, source="mouse_listener")

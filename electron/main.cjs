@@ -162,14 +162,22 @@ function waitForBackend(timeoutMs = 180000) {
 
 function stopBackend() {
   if (!backendProcess || !backendProcess.pid) return;
+  const pid = backendProcess.pid;
   try {
-    treeKill(backendProcess.pid, 'SIGTERM', (err) => {
+    treeKill(pid, 'SIGTERM', (err) => {
       if (err) {
         try {
-          treeKill(backendProcess.pid, 'SIGKILL', () => {});
+          treeKill(pid, 'SIGKILL', () => {});
         } catch (_) {}
       }
     });
+    // 部分 macOS 场景下子进程会在 SIGTERM 后残留一小段时间，这里兜底补一次 SIGKILL。
+    setTimeout(() => {
+      try {
+        process.kill(pid, 0);
+        treeKill(pid, 'SIGKILL', () => {});
+      } catch (_) {}
+    }, 1500);
   } catch (_) {}
   backendProcess = null;
 }
