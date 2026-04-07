@@ -185,36 +185,15 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "${app_path}" "out/arm64/跨屏输入-arm64.app.zip"
           ls -la out/arm64
 
-      - name: Upload arm64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mac-dist-arm64
-          path: out/arm64/*
-          if-no-files-found: error
-          retention-days: 30
-
-  publish-macos:
-    needs: [build-macos-arm64]
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download arm64 packages
-        uses: actions/download-artifact@v4
-        with:
-          name: mac-dist-arm64
-          path: publish/arm64
-
       - name: Validate package outputs
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          ls -la publish/arm64
-          compgen -G "publish/arm64/*.app.zip" > /dev/null
+          ls -la out/arm64
+          compgen -G "out/arm64/*.app.zip" > /dev/null
 
       - name: Move dev-latest-macos tag to current commit (main only)
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -235,7 +214,7 @@ jobs:
           make_latest: false
           overwrite: true
           files: |
-            publish/arm64/*.app.zip
+            out/arm64/*.app.zip
           body: |
             macOS 开发版（仅 Apple Silicon / arm64）：
             - arm64: Apple Silicon
@@ -244,12 +223,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: KPSR 跨屏输入（macOS）${{ github.ref_name }}
           files: |
-            publish/arm64/*.app.zip
+            out/arm64/*.app.zip
           overwrite: true
           body: |
             macOS 应用包（仅 Apple Silicon / arm64）：
