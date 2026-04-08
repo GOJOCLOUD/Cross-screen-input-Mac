@@ -10,6 +10,8 @@ import sys
 import os
 import re
 import json
+import tempfile
+import threading
 from datetime import datetime
 from typing import List, Optional
 
@@ -27,6 +29,7 @@ router = APIRouter()
 
 # 数据文件路径（使用统一的配置）
 JSON_FILE = os.path.join(DATA_DIR, "mouse_buttons.json")
+_buttons_file_lock = threading.Lock()
 
 def ensure_data_dir():
     """确保数据目录存在"""
@@ -67,6 +70,10 @@ def load_buttons_data() -> dict:
         
         if "buttons" not in data:
             data["buttons"] = []
+        if not isinstance(data.get("buttons"), list):
+            data["buttons"] = []
+        # 过滤非字典项，避免脏数据破坏监听映射加载
+        data["buttons"] = [b for b in data["buttons"] if isinstance(b, dict)]
         
         return data
     except Exception as e:
@@ -79,9 +86,25 @@ def save_buttons_data(data: dict) -> bool:
     
     try:
         data["last_updated"] = datetime.now().isoformat()
-        
-        with open(JSON_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+        with _buttons_file_lock:
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                prefix="mouse_buttons.",
+                suffix=".tmp",
+                dir=os.path.dirname(JSON_FILE),
+            )
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    f.write(payload)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, JSON_FILE)
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
         return True
     except Exception as e:
         print(f"保存鼠标按钮配置失败: {e}")

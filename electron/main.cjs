@@ -27,6 +27,7 @@ let isEnsuringBackend = false;
 let stoppingBackendPromise = null;
 let isShutdownInProgress = false;
 let isAppForceExiting = false;
+let backendLastExit = null;
 
 ipcMain.handle('kpsr-quit', () => {
   void shutdownAppWithBackend();
@@ -90,41 +91,61 @@ function getBackendEnv() {
 
 function startBackend() {
   const env = getBackendEnv();
+  const attachLifecycle = (proc) => {
+    if (!proc) return proc;
+    proc.once('exit', (code, signal) => {
+      backendLastExit = {
+        at: Date.now(),
+        code: Number.isFinite(code) ? code : null,
+        signal: signal || null,
+      };
+      if (backendProcess === proc) {
+        backendProcess = null;
+      }
+    });
+    proc.once('error', () => {
+      if (backendProcess === proc) {
+        backendProcess = null;
+      }
+    });
+    return proc;
+  };
+
   if (app.isPackaged) {
     const exe = getBackendExecutable();
     if (!fs.existsSync(exe)) {
       throw new Error(`未找到后端程序：\n${exe}`);
     }
-    backendProcess = spawn(exe, [], {
+    backendProcess = attachLifecycle(spawn(exe, [], {
       cwd: path.dirname(exe),
       windowsHide: true,
       stdio: 'ignore',
       env,
-    });
+    }));
     return;
   }
 
   // 开发模式：优先使用已打包后端二进制；否则用 python 启动 main.py
   const devExe = getBackendExecutable();
   if (fs.existsSync(devExe)) {
-    backendProcess = spawn(devExe, [], {
+    backendProcess = attachLifecycle(spawn(devExe, [], {
       cwd: path.dirname(devExe),
       windowsHide: true,
       stdio: 'inherit',
       env,
-    });
+    }));
     return;
   }
 
   const backendDir = path.join(__dirname, '..', 'hotspot', 'backend');
   const py = process.platform === 'win32' ? 'python' : 'python3';
-  backendProcess = spawn(py, ['main.py'], {
+  backendProcess = attachLifecycle(spawn(py, ['main.py'], {
     cwd: backendDir,
     shell: true,
     windowsHide: false,
     stdio: 'inherit',
     env,
-  });
+  }));
 }
 
 function waitForBackend(timeoutMs = 180000) {
@@ -267,15 +288,14 @@ async function ensureBackendReadyForReopen() {
     // 后端可达则直接复用
     if (await waitForBackend(1500)) return true;
 
-    // 后端不可达且子进程已不存在时，尝试重启一次
-    if (!isBackendProcessAlive()) {
-      try {
-        launchInstanceToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        startBackend();
-      } catch (e) {
-        console.warn('[KPSR] 二次启动时重启后端失败:', e);
-        return false;
-      }
+    // 后端不可达时，不论是否仍有残留 pid，统一先做一次回收再重启，避免“假活进程”阻断恢复
+    await stopBackend(3500);
+    try {
+      launchInstanceToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      startBackend();
+    } catch (e) {
+      console.warn('[KPSR] 二次启动时重启后端失败:', e);
+      return false;
     }
     return await waitForBackend(20000);
   } finally {
@@ -409,9 +429,23 @@ if (!gotLock) {
 
     loadMainUiInWindow();
 
-    app.on('activate', () => {
+    app.on('activate', async () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+        const ok = await ensureBackendReadyForReopen();
+        if (!ok) {
+          await dialog.showMessageBox({
+            type: 'error',
+            title: 'KPSR 跨屏输入',
+            message: '后端未就绪，无法恢复主界面',
+            detail:
+              `请稍后重试；若持续失败，请先完全退出程序后再启动。\n当前端口：${backendPort}` +
+              (backendLastExit
+                ? `\n最近后端退出信息：code=${backendLastExit.code}, signal=${backendLastExit.signal}`
+                : ''),
+          });
+          return;
+        }
         loadMainUiInWindow();
       }
     });
@@ -426,5 +460,14 @@ if (!gotLock) {
     if (isAppForceExiting) return;
     event.preventDefault();
     void shutdownAppWithBackend();
+  });
+
+  process.on('uncaughtException', async (err) => {
+    console.error('[KPSR] 主进程未捕获异常:', err);
+    await shutdownAppWithBackend(1);
+  });
+  process.on('unhandledRejection', async (reason) => {
+    console.error('[KPSR] 主进程未处理 Promise 拒绝:', reason);
+    await shutdownAppWithBackend(1);
   });
 }

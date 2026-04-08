@@ -63,6 +63,11 @@ jobs:
           pip install -r hotspot/backend/requirements.txt
           pip install "pyinstaller>=6.0"
 
+      - name: Run backend contract tests
+        shell: bash
+        run: |
+          PYTHONPATH="hotspot/backend" python -m unittest discover -s hotspot/backend/tests -p "test_*.py" -v
+
       - name: Build backend binary (arm64 host)
         shell: bash
         run: |
@@ -188,6 +193,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "${app_path}" "out/arm64/跨屏输入-arm64.app.zip"
           compgen -G "electron/dist/*.dmg" > /dev/null
           cp -f electron/dist/*.dmg out/arm64/
+          (cd out/arm64 && shasum -a 256 *.dmg *.app.zip > SHA256SUMS.txt)
           ls -la out/arm64
 
       - name: Validate package outputs
@@ -222,6 +228,7 @@ jobs:
           files: |
             out/arm64/*.app.zip
             out/arm64/*.dmg
+            out/arm64/SHA256SUMS.txt
           body: |
             macOS 开发版（仅 Apple Silicon / arm64）：
             - arm64: Apple Silicon
@@ -238,6 +245,7 @@ jobs:
           files: |
             out/arm64/*.app.zip
             out/arm64/*.dmg
+            out/arm64/SHA256SUMS.txt
           overwrite: true
           body: |
             macOS 应用包（仅 Apple Silicon / arm64）：

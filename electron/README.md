@@ -13,6 +13,19 @@
 
 由 CI 完成：先构建 `kpsr-backend.exe` 复制到 `resources/backend/`，再执行 `npm run dist:win`。
 
+## 无证书本地发包（macOS）
+
+未购买开发者证书时，建议使用“无证书构建 + 本地自签名验证”的流程：
+
+1. 先跑预发布检查（仓库根目录）：
+   - `bash scripts/pre_release_check.sh`
+   - 如需本机直接打包：`bash scripts/pre_release_check.sh --with-dist`
+2. 对应用做 ad-hoc 自签并验签：
+   - `bash self_sign_app.sh`
+3. 如需查阅约束文档：
+   - 权限字段契约：`docs/desktop-permission-contract.md`
+   - 主进程生命周期：`docs/electron-backend-lifecycle.md`
+
 产物一般在 `electron/dist/`：
 
 - **NSIS 安装包**：`KPSR跨屏输入 Setup x.y.z.exe`

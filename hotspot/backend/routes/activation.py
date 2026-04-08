@@ -8,6 +8,8 @@ import base64
 import json
 import os
 import re
+import tempfile
+import threading
 from typing import Tuple
 
 from fastapi import APIRouter, HTTPException
@@ -33,6 +35,7 @@ except Exception:
     ACTIVATION_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "activation.json")
 
 _ed25519_public = None
+_activation_file_lock = threading.Lock()
 
 
 def _coerce_activated_flag(value) -> bool:
@@ -188,8 +191,25 @@ def save_activation_status(status: dict) -> bool:
     """
     try:
         os.makedirs(os.path.dirname(ACTIVATION_FILE), exist_ok=True)
-        with open(ACTIVATION_FILE, "w", encoding="utf-8") as f:
-            json.dump(status, f, ensure_ascii=False, indent=2)
+        payload = json.dumps(status, ensure_ascii=False, indent=2)
+        with _activation_file_lock:
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                prefix="activation.",
+                suffix=".tmp",
+                dir=os.path.dirname(ACTIVATION_FILE),
+            )
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    f.write(payload)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, ACTIVATION_FILE)
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
         return True
     except Exception:
         return False
