@@ -44,6 +44,16 @@ _listener_state_lock = threading.Lock()
 _mac_start_ready_event = None
 _mac_start_ok = False
 
+
+def _mac_accessibility_target_path() -> str:
+    """返回当前发起辅助功能请求的可执行文件路径（用于提示用户精确授权对象）。"""
+    try:
+        if getattr(sys, "frozen", False):
+            return os.path.abspath(sys.executable)
+    except Exception:
+        pass
+    return os.path.abspath(sys.executable or "")
+
 # 鼠标按键映射
 button_mappings = {}  # 单键映射: {keyType: action}
 sequence_mappings = []  # 序列映射: [{sequence: [key1, key2], action: action}, ...]
@@ -547,6 +557,19 @@ def _open_macos_accessibility_settings():
     except Exception as e:
         app_logger.warning(f"打开辅助功能设置页失败: {e}", source="mouse_listener")
 
+    # 同时在 Finder 中定位实际需要授权的可执行文件，减少“授权了 App 但监听进程无权限”的误操作。
+    target = _mac_accessibility_target_path()
+    if target and os.path.exists(target):
+        try:
+            subprocess.Popen(
+                ["open", "-R", target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception as e:
+            app_logger.warning(f"在 Finder 中定位授权目标失败: {e}", source="mouse_listener")
+
 
 def check_accessibility_permission(prompt: bool = False) -> bool:
     """检测 macOS 辅助功能权限（仅 Mac）"""
@@ -574,7 +597,15 @@ def check_accessibility_permission(prompt: bool = False) -> bool:
             return True
         else:
             has_permission = False
-            permission_message = "未获得辅助功能权限，鼠标侧键功能不可用。请在 系统设置 > 隐私与安全性 > 辅助功能 中授权本程序"
+            target = _mac_accessibility_target_path()
+            if target:
+                permission_message = (
+                    "未获得辅助功能权限，鼠标侧键功能不可用。"
+                    "请在 系统设置 > 隐私与安全性 > 辅助功能 中授权该可执行文件："
+                    f"{target}"
+                )
+            else:
+                permission_message = "未获得辅助功能权限，鼠标侧键功能不可用。请在 系统设置 > 隐私与安全性 > 辅助功能 中授权本程序"
             app_logger.warning(permission_message, source="mouse_listener")
             return False
     except Exception as e:
@@ -654,7 +685,11 @@ def _run_macos_listener():
         if _tap is None:
             app_logger.error("创建事件 tap 失败，请检查辅助功能权限", source="mouse_listener")
             has_permission = False
-            permission_message = "辅助功能权限未生效，请在系统设置中重新勾选后重试"
+            target = _mac_accessibility_target_path()
+            if target:
+                permission_message = f"辅助功能权限未生效，请在系统设置中重新勾选该可执行文件后重试：{target}"
+            else:
+                permission_message = "辅助功能权限未生效，请在系统设置中重新勾选后重试"
             _mac_start_ok = False
             if _mac_start_ready_event:
                 _mac_start_ready_event.set()
