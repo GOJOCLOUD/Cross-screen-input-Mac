@@ -8,6 +8,22 @@
  */
 delete process.env.ELECTRON_RUN_AS_NODE;
 
+/**
+ * 早期启动诊断日志（写入 /tmp，便于定位“一闪退/无窗口”问题）。
+ * 生产环境可保留，文件很小；不包含用户隐私数据。
+ */
+const _bootFs = require('fs');
+function _bootLog(line) {
+  try {
+    const ts = new Date().toISOString();
+    _bootFs.appendFileSync('/tmp/kpsr-electron-boot.log', `[${ts}] ${line}\n`, 'utf8');
+  } catch (_) {}
+}
+_bootLog('main.cjs start');
+process.on('exit', (code) => _bootLog(`process exit code=${code}`));
+process.on('uncaughtException', (err) => _bootLog(`uncaughtException: ${String(err && err.stack ? err.stack : err)}`));
+process.on('unhandledRejection', (reason) => _bootLog(`unhandledRejection: ${String(reason)}`));
+
 const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -35,6 +51,8 @@ let stoppingBackendPromise = null;
 let isShutdownInProgress = false;
 let isAppForceExiting = false;
 let backendLastExit = null;
+
+_bootLog(`electron required ok; isPackaged=${app.isPackaged}`);
 
 ipcMain.handle('kpsr-quit', () => {
   void shutdownAppWithBackend();
