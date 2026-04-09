@@ -12,6 +12,30 @@ import json
 import shutil
 
 
+def _safe_print(msg: str):
+    """
+    在 Windows 的默认控制台编码（如 cp1252）下，直接 print 中文可能触发 UnicodeEncodeError，
+    进而导致导入失败（CI 测试会因此挂掉）。这里做一次安全降级输出。
+    """
+    try:
+        print(msg)
+        return
+    except UnicodeEncodeError:
+        pass
+    try:
+        b = (str(msg) + "\n").encode("utf-8", errors="replace")
+        out = getattr(sys.stdout, "buffer", None)
+        if out:
+            out.write(b)
+            out.flush()
+        else:
+            # 最差降级：丢弃不可编码字符
+            print(str(msg).encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace"))
+    except Exception:
+        # 不让日志输出影响功能
+        return
+
+
 def is_packaged():
     """检测是否在打包环境中运行（PyInstaller）"""
     # PyInstaller 打包后会设置 frozen 属性
@@ -364,10 +388,10 @@ def init_default_data():
 # 初始化默认数据
 init_default_data()
 
-print(f"[KPSR] 运行模式: {'打包环境' if IS_PACKAGED else '开发环境'}")
-print(f"[KPSR] 数据目录: {DATA_DIR}")
-print(f"[KPSR] 日志目录: {LOGS_DIR}")
-print(f"[KPSR] HTTP 端口: {HTTP_PORT}")
+_safe_print(f"[KPSR] 运行模式: {'打包环境' if IS_PACKAGED else '开发环境'}")
+_safe_print(f"[KPSR] 数据目录: {DATA_DIR}")
+_safe_print(f"[KPSR] 日志目录: {LOGS_DIR}")
+_safe_print(f"[KPSR] HTTP 端口: {HTTP_PORT}")
 
 __all__ = [
     "PROJECT_ROOT",
