@@ -28,7 +28,7 @@ const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const treeKill = require('tree-kill');
 
 /** 默认端口；可被环境变量 KPSR_PORT、用户目录 settings.json 的 http_port 覆盖（与 Python 后端 config 一致） */
@@ -224,6 +224,77 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** 探测本机 health 上的 instance_token；无服务或失败则 null */
+function probeHealthInstanceToken(timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    const req = http.get(getHealthUrl(), { timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        body += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          resolve(null);
+          return;
+        }
+        try {
+          const j = JSON.parse(body || '{}');
+          resolve(typeof j.instance_token === 'string' ? j.instance_token : '');
+        } catch (_) {
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * 结束占用指定 TCP 监听端口的进程（用于清理残留 kpsr-backend / 开发 uvicorn）。
+ * 仅 macOS/Linux：lsof；Windows 暂跳过（可后续用 PowerShell 补充）。
+ */
+function killListenersOnTcpPort(port) {
+  if (process.platform === 'win32') {
+    _bootLog(`killListenersOnTcpPort(${port}): skipped on win32`);
+    return;
+  }
+  try {
+    const out = execFileSync('lsof', ['-tiTCP:' + String(port), '-sTCP:LISTEN'], { encoding: 'utf8' });
+    const pids = [...new Set(out.trim().split(/\s+/).filter(Boolean))];
+    for (const s of pids) {
+      const pid = parseInt(s, 10);
+      if (!Number.isFinite(pid) || pid === process.pid) continue;
+      try {
+        process.kill(pid, 'SIGKILL');
+        _bootLog(`killListenersOnTcpPort: SIGKILL pid=${pid} port=${port}`);
+      } catch (e) {
+        _bootLog(`killListenersOnTcpPort: kill ${pid} failed: ${e}`);
+      }
+    }
+  } catch (_) {
+    // 无监听进程
+  }
+}
+
+/**
+ * 若端口上已有 /health 但 instance_token 与本次启动不一致，说明是旧进程占用，先释放端口再启动新后端。
+ */
+async function reclaimStaleBackendPortIfNeeded() {
+  const tok = await probeHealthInstanceToken(1200);
+  if (tok === null) return;
+  if (tok === launchInstanceToken) return;
+  _bootLog(
+    `port ${backendPort}: existing backend instance_token mismatch (have="${tok.slice(0, 12)}…"), reclaiming port`,
+  );
+  killListenersOnTcpPort(backendPort);
+  await delay(600);
+}
+
 function isProcessAlive(pid) {
   if (!Number.isFinite(pid) || pid <= 0) return false;
   try {
@@ -390,6 +461,7 @@ function loadMainUiInWindow() {
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
+  _bootLog('single-instance: no lock, exiting (another instance may be running)');
   app.quit();
 } else {
   app.on('second-instance', async () => {
@@ -431,6 +503,7 @@ if (!gotLock) {
       app.quit();
       return;
     }
+    await reclaimStaleBackendPortIfNeeded();
     try {
       startBackend();
     } catch (e) {
