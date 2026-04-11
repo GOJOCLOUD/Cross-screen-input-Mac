@@ -45,6 +45,18 @@ def _now_ts() -> int:
 
     return int(time.time())
 
+
+def format_trial_remaining_human(seconds: int) -> str:
+    """与桌面端倒计时一致：≥1 天 / 小时 / 分钟 / 秒（单档最大单位）。"""
+    s = max(0, int(seconds or 0))
+    if s >= 86400:
+        return f"{s // 86400} 天"
+    if s >= 3600:
+        return f"{s // 3600} 小时"
+    if s >= 60:
+        return f"{s // 60} 分钟"
+    return f"{s} 秒"
+
 # 与 scripts/issue_license.py 中 PRODUCT_ID / LICENSE_FORMAT_PREFIX 保持一致
 PRODUCT_ID = "cross-screen-input"
 LICENSE_FORMAT_PREFIX = "cs1"
@@ -106,9 +118,12 @@ class ActivationStatus(BaseModel):
     message: str
     effective_mode: str = "unknown"
     phone_requires_activation: bool = False
+    # 是否已使用激活码（与「试用期内对外算已激活」区分）
+    license_activated: bool = False
     # 试用状态（离线）
     trial_active: bool = False
     trial_expired: bool = False
+    trial_never_started: bool = True
     trial_remaining_seconds: int = 0
     clock_rollback_detected: bool = False
 
@@ -218,9 +233,8 @@ def load_activation_status() -> dict:
 
 def _ensure_trial_fields(status: dict) -> dict:
     """
-    确保试用字段存在。
-    - 未激活时：仅在“从未开始过试用”时写入 trial_started_at。
-      一旦试用到期，保持到期状态，不自动重开试用（否则永远不会进入未激活拦截态）。
+    确保试用辅助字段存在（时长、last_seen 等）。
+    trial_started_at 仅由用户点击「开始试用」后经 POST /api/desktop/trial-start 写入，不在此自动赋值。
     """
     status = dict(status or {})
     now = _now_ts()
@@ -232,9 +246,7 @@ def _ensure_trial_fields(status: dict) -> dict:
 
     # 仅在“未激活且从未开始过试用”时写入开始时间；不在到期时重置
     activated = _coerce_activated_flag(status.get("activated", False))
-    if (not activated) and status.get("trial_started_at") is None:
-        status["trial_started_at"] = now
-        changed = True
+    # 试用开始时间仅由用户点击「开始试用」并同意后写入，禁止在此自动开跑
 
     if status.get("last_seen_at") is None:
         status["last_seen_at"] = now
@@ -251,10 +263,9 @@ def _ensure_trial_fields(status: dict) -> dict:
 
 def start_trial_if_needed(now_ts: Optional[int] = None) -> dict:
     """
-    在“用户同意协议”的时点启动试用（仅一次，不续命）。
+    在用户点击「开始试用」并同意协议后调用（POST /api/desktop/trial-start）。仅一次，不续命。
     - 已激活：不启动试用
-    - 未激活且 trial_started_at 为空：写入 trial_started_at=now，并持久化
-    返回写入后的激活状态字典（便于调试/验证）。
+    - 未激活：写入 trial_started_at、trial_explicit_started=true
     """
     try:
         status = load_activation_status()
@@ -270,7 +281,10 @@ def start_trial_if_needed(now_ts: Optional[int] = None) -> dict:
         if status.get("trial_started_at") is None:
             status["trial_started_at"] = now
             changed = True
-        # 同意协议即视为“试用开始”，顺带初始化这些字段，避免 get_trial_snapshot 首次访问才落盘
+        if status.get("trial_explicit_started") is not True:
+            status["trial_explicit_started"] = True
+            changed = True
+        # 与 trial_started_at 同步写入，标记为「用户显式开始试用」
         if status.get("last_seen_at") is None:
             status["last_seen_at"] = now
             changed = True
@@ -314,6 +328,7 @@ def get_trial_snapshot() -> dict:
             return {
                 "trial_active": False,
                 "trial_expired": False,
+                "trial_never_started": True,
                 "trial_remaining_seconds": 0,
                 "clock_rollback_detected": False,
             }
@@ -322,11 +337,18 @@ def get_trial_snapshot() -> dict:
         return {
             "trial_active": False,
             "trial_expired": False,
+            "trial_never_started": True,
             "trial_remaining_seconds": 0,
             "clock_rollback_detected": False,
         }
 
     status = load_activation_status()
+    # 旧版可能只写入了 trial_started_at 而未经过「开始试用」；忽略并清理，避免一打开就算试用中
+    if status.get("trial_started_at") is not None and status.get("trial_explicit_started") is not True:
+        status = dict(status)
+        status["trial_started_at"] = None
+        save_activation_status(status)
+
     status = _ensure_trial_fields(status)
 
     activated = _coerce_activated_flag(status.get("activated", False))
@@ -334,8 +356,19 @@ def get_trial_snapshot() -> dict:
         return {
             "trial_active": False,
             "trial_expired": False,
+            "trial_never_started": False,
             "trial_remaining_seconds": 0,
             "clock_rollback_detected": bool(status.get("clock_rollback_detected", False)),
+        }
+
+    # 必须同时有「显式开始」标记与开始时间（均由 POST /trial-start 写入）
+    if status.get("trial_explicit_started") is not True or status.get("trial_started_at") is None:
+        return {
+            "trial_active": False,
+            "trial_expired": False,
+            "trial_never_started": True,
+            "trial_remaining_seconds": 0,
+            "clock_rollback_detected": False,
         }
 
     now = _now_ts()
@@ -362,6 +395,7 @@ def get_trial_snapshot() -> dict:
         return {
             "trial_active": False,
             "trial_expired": True,
+            "trial_never_started": False,
             "trial_remaining_seconds": 0,
             "clock_rollback_detected": True,
         }
@@ -381,6 +415,7 @@ def get_trial_snapshot() -> dict:
     return {
         "trial_active": active,
         "trial_expired": expired,
+        "trial_never_started": False,
         "trial_remaining_seconds": int(remaining),
         "clock_rollback_detected": False,
     }
@@ -471,14 +506,19 @@ def get_activation_status():
     effective = getattr(station, "mode", "unknown") or "unknown"
     phone_requires_activation = not activated
 
+    rem = int(trial.get("trial_remaining_seconds", 0) or 0)
+    rem_h = format_trial_remaining_human(rem)
+    never_started = bool(trial.get("trial_never_started", False))
     if activated:
         # 区分真实激活 vs 试用激活态，仅影响提示文案
-        msg = "已激活" if raw_activated else f"免费试用中，剩余 {int(trial.get('trial_remaining_seconds', 0))} 秒"
+        msg = "已激活" if raw_activated else f"免费试用中，剩余 {rem_h}"
     else:
         if bool(trial.get("clock_rollback_detected", False)):
             msg = "检测到系统时间回退，请激活后使用手机端功能"
         elif bool(trial.get("trial_active", False)):
-            msg = f"免费试用中，剩余 {int(trial.get('trial_remaining_seconds', 0))} 秒"
+            msg = f"免费试用中，剩余 {rem_h}"
+        elif never_started:
+            msg = "未激活：可点击左上角「开始试用」或输入激活码"
         else:
             msg = "试用已到期，请激活后使用手机端功能"
 
@@ -488,8 +528,10 @@ def get_activation_status():
         message=msg,
         effective_mode=effective,
         phone_requires_activation=phone_requires_activation,
+        license_activated=raw_activated,
         trial_active=bool(trial.get("trial_active", False)),
         trial_expired=bool(trial.get("trial_expired", False)),
+        trial_never_started=never_started,
         trial_remaining_seconds=int(trial.get("trial_remaining_seconds", 0) or 0),
         clock_rollback_detected=bool(trial.get("clock_rollback_detected", False)),
     )

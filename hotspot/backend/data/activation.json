@@ -1,5 +1,7 @@
 {
   "activated": false,
   "uuid": "",
-  "license_blob": ""
+  "license_blob": "",
+  "trial_duration_seconds": 604800,
+  "clock_rollback_detected": false
 }

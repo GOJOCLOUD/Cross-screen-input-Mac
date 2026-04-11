@@ -6,32 +6,24 @@
     <title>跨屏输入</title>
     <link rel="stylesheet" href="/frontend/css/desktop.css">
     <script src="/frontend/js/lib/qrcode.min.js"></script>
-    <style>
-        /* 左上角试用倒计时（桌面端） */
-        #trialCountdown {
-            position: fixed;
-            top: 12px;
-            left: 12px;
-            z-index: 9999;
-            display: none;
-            padding: 8px 10px;
-            border-radius: 10px;
-            background: rgba(17, 24, 39, 0.85);
-            color: #fff;
-            font-size: 13px;
-            line-height: 1.2;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-            user-select: none;
-        }
-        #trialCountdown strong { font-weight: 600; }
-    </style>
 </head>
-<body class="eula-pending">
-    <div id="trialCountdown"><strong>试用</strong> 剩余 <span id="trialCountdownSeconds">--</span>s</div>
+<body>
+    <!-- 未激活：开始试用 + 问号；试用中：倒计时 + 问号；试用结束：仅问号（左上角） -->
+    <div id="trialHud" class="trial-hud" aria-live="polite">
+        <div id="trialHudIdle" class="trial-hud-row">
+            <button type="button" id="startTrialBtn" class="trial-start-btn">开始试用</button>
+            <button type="button" class="agreement-link-btn" data-eula-help title="查看用户协议">?</button>
+        </div>
+        <div id="trialHudActive" class="trial-hud-row">
+            <span id="trialCountdownLabel" class="trial-countdown-label"><strong>试用</strong> 剩余 <span id="trialCountdownRemain">--</span></span>
+            <button type="button" class="agreement-link-btn" data-eula-help title="查看用户协议">?</button>
+        </div>
+        <div id="trialHudExpired" class="trial-hud-row trial-hud-row--solo">
+            <button type="button" class="agreement-link-btn" data-eula-help title="查看用户协议">?</button>
+        </div>
+    </div>
     <!-- 用户协议遮罩层 -->
-    <div id="agreementModal" class="agreement-modal" style="display: none;">
+    <div id="agreementModal" class="agreement-modal">
         <div class="agreement-overlay"></div>
         <div class="agreement-content">
             <div class="agreement-header">
@@ -58,7 +50,7 @@
             <div class="card-title">手机扫码访问</div>
             <div class="qrcode-wrapper">
                 <div id="qrcode"></div>
-                <p class="qrcode-tip">请确保手机与电脑在同一私有网络（手机热点或同一路由器 Wi‑Fi 均可），扫码或复制链接访问 <button class="agreement-link-btn" id="agreementLinkBtn" title="查看用户协议">?</button></p>
+                <p class="qrcode-tip">请确保手机与电脑在同一私有网络（手机热点或同一路由器 Wi‑Fi 均可），扫码或复制链接访问</p>
             </div>
         </div>
 
@@ -195,12 +187,28 @@
         const TIP_UNIFIED = '请确保手机与电脑在同一私有网络（手机热点或同一路由器 Wi‑Fi 均可），扫码或复制链接访问';
         /** 未激活：与链接/二维码一致，且不暴露端口/IP（不再区分网段） */
         const MSG_NEED_ACTIVATE = '请激活后使用手机端';
-        // 激活状态在窗口最小化/恢复后可能遭遇瞬时异常响应，这里做一次前端防抖确认。
-        let lastActivationUiState = null; // true / false / null
+        // 激活/试用解锁态：窗口最小化、改尺寸等可能触发并发请求，需防陈旧响应与误跳「已激活」。
+        let lastActivationUiState = null; // true / false / null（表示「已解锁」：正式激活或试用进行中）
+        let activationStatusFetchGen = 0;
         // 试用倒计时：使用本地 tick 保证每秒变化；到 0 后自动刷新激活状态
         let trialExpiryAtMs = null;
         let trialTickTimer = null;
         let trialExpireRefreshOnce = false;
+
+        /** 试用剩余时间展示：≥1 天用天，否则 ≥1 小时用小时，否则 ≥1 分钟用分钟，否则用秒 */
+        function formatTrialRemaining(totalSeconds) {
+            const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+            if (s >= 86400) {
+                return Math.floor(s / 86400) + ' 天';
+            }
+            if (s >= 3600) {
+                return Math.floor(s / 3600) + ' 小时';
+            }
+            if (s >= 60) {
+                return Math.floor(s / 60) + ' 分钟';
+            }
+            return s + ' 秒';
+        }
 
         function stopTrialCountdown() {
             if (trialTickTimer) {
@@ -209,8 +217,6 @@
             }
             trialExpiryAtMs = null;
             trialExpireRefreshOnce = false;
-            const trialEl = document.getElementById('trialCountdown');
-            if (trialEl) trialEl.style.display = 'none';
         }
 
         function startTrialCountdown(seconds) {
@@ -221,20 +227,16 @@
             }
             trialExpiryAtMs = Date.now() + sec * 1000;
             trialExpireRefreshOnce = false;
-            const trialEl = document.getElementById('trialCountdown');
-            const trialSecEl = document.getElementById('trialCountdownSeconds');
-            if (!trialEl || !trialSecEl) return;
+            const trialRemainEl = document.getElementById('trialCountdownRemain');
+            if (!trialRemainEl) return;
 
             const tick = async () => {
                 if (trialExpiryAtMs == null) return;
                 const left = Math.max(0, Math.ceil((trialExpiryAtMs - Date.now()) / 1000));
                 if (left > 0) {
-                    trialSecEl.textContent = String(left);
-                    trialEl.style.display = 'block';
+                    trialRemainEl.textContent = formatTrialRemaining(left);
                     return;
                 }
-                // 到期：隐藏倒计时，并触发一次状态刷新进入“需激活”UI
-                trialEl.style.display = 'none';
                 if (!trialExpireRefreshOnce) {
                     trialExpireRefreshOnce = true;
                     try {
@@ -244,7 +246,6 @@
                 stopTrialCountdown();
             };
 
-            // 立即更新一次，然后每秒 tick
             void tick();
             if (trialTickTimer) clearInterval(trialTickTimer);
             trialTickTimer = setInterval(() => { void tick(); }, 1000);
@@ -261,88 +262,118 @@
             return false;
         }
 
-        /** 必须先于激活/二维码逻辑：从服务端读取是否已同意协议（不依赖 localStorage） */
-        async function ensureEulaAccepted() {
-            try {
-                const r = await fetch('/api/desktop/eula-status');
-                const d = await r.json();
-                if (d.accepted) {
-                    document.body.classList.remove('eula-pending');
-                    setupAgreementViewer();
-                    return true;
-                }
-            } catch (e) {
-                console.warn('[KPSR] eula-status 不可用，跳过协议门', e);
-                document.body.classList.remove('eula-pending');
-                return true;
-            }
+        /** 是否视为「已解锁」（正式激活码 或 试用进行中）；不依赖笼统的 activated，避免误跳 */
+        function computeFullyUnlocked(d) {
+            if (!d) return false;
+            if (d.license_activated === true || d.trial_active === true) return true;
+            if (d.license_activated === false && d.trial_active === false) return false;
+            return normalizeActivationFlag(d.activated);
+        }
+
+        function hideAgreementModal() {
             const modal = document.getElementById('agreementModal');
+            if (modal) modal.style.display = 'none';
+            document.body.style.overflow = '';
+        }
+
+        function configureAgreementModalForViewer() {
             const agreeBtn = document.getElementById('agreeBtn');
             const disagreeBtn = document.getElementById('disagreeBtn');
-            if (!modal || !agreeBtn || !disagreeBtn) {
-                document.body.classList.remove('eula-pending');
-                return true;
-            }
+            if (!agreeBtn || !disagreeBtn) return;
+            agreeBtn.textContent = '知道了';
+            disagreeBtn.textContent = '关闭';
+            agreeBtn.onclick = () => hideAgreementModal();
+            disagreeBtn.onclick = () => hideAgreementModal();
+        }
+
+        function configureAgreementModalForTrialGate() {
+            const agreeBtn = document.getElementById('agreeBtn');
+            const disagreeBtn = document.getElementById('disagreeBtn');
+            if (!agreeBtn || !disagreeBtn) return;
+            agreeBtn.textContent = '同意';
+            disagreeBtn.textContent = '不同意';
+            disagreeBtn.onclick = () => hideAgreementModal();
+            agreeBtn.onclick = async () => {
+                try {
+                    const r1 = await fetch('/api/desktop/eula-accept', { method: 'POST' });
+                    if (!r1.ok) throw new Error('保存协议失败');
+                    const r2 = await fetch('/api/desktop/trial-start', { method: 'POST' });
+                    if (!r2.ok) {
+                        let detail = '试用启动失败';
+                        try {
+                            const j = await r2.json();
+                            if (j.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+                        } catch (_) { /* ignore */ }
+                        throw new Error(detail);
+                    }
+                    hideAgreementModal();
+                    configureAgreementModalForViewer();
+                    bindEulaHelpButtons();
+                    await loadActivationStatus();
+                } catch (e) {
+                    console.error(e);
+                    alert('无法开始试用：' + (e.message || e));
+                }
+            };
+        }
+
+        function openTrialGateModal() {
+            const modal = document.getElementById('agreementModal');
+            if (!modal) return;
+            configureAgreementModalForTrialGate();
             modal.style.display = 'flex';
             document.body.style.overflow = 'hidden';
-            return await new Promise((resolve) => {
-                const onAgree = async () => {
-                    try {
-                        const r = await fetch('/api/desktop/eula-accept', { method: 'POST' });
-                        if (!r.ok) throw new Error('HTTP ' + r.status);
-                    } catch (err) {
-                        console.error(err);
-                        alert('保存协议状态失败，请重试');
-                        return;
-                    }
-                    modal.style.display = 'none';
-                    document.body.style.overflow = '';
-                    document.body.classList.remove('eula-pending');
-                    agreeBtn.removeEventListener('click', onAgree);
-                    disagreeBtn.removeEventListener('click', onDisagree);
-                    setupAgreementViewer();
-                    resolve(true);
+        }
+
+        function openEulaViewerModal() {
+            const modal = document.getElementById('agreementModal');
+            if (!modal) return;
+            configureAgreementModalForViewer();
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function bindEulaHelpButtons() {
+            document.querySelectorAll('[data-eula-help]').forEach((btn) => {
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    openEulaViewerModal();
                 };
-                const onDisagree = () => {
-                    agreeBtn.removeEventListener('click', onAgree);
-                    disagreeBtn.removeEventListener('click', onDisagree);
-                    if (window.kpsrDesktop && typeof window.kpsrDesktop.quitApp === 'function') {
-                        window.kpsrDesktop.quitApp();
-                    } else if (confirm('必须同意用户协议才能使用。是否关闭？')) {
-                        window.close();
-                    }
-                    resolve(false);
-                };
-                agreeBtn.addEventListener('click', onAgree);
-                disagreeBtn.addEventListener('click', onDisagree);
             });
         }
 
-        /** 协议通过后的「查看协议」交互：与首次强制同意分离，避免与激活遮罩冲突 */
-        function setupAgreementViewer() {
-            const modal = document.getElementById('agreementModal');
-            const agreeBtn = document.getElementById('agreeBtn');
-            const disagreeBtn = document.getElementById('disagreeBtn');
-            const linkBtn = document.getElementById('agreementLinkBtn');
-            if (!modal || !agreeBtn || !disagreeBtn) return;
-            agreeBtn.textContent = '知道了';
-            disagreeBtn.textContent = '关闭';
-            const close = () => {
-                modal.style.display = 'none';
-                document.body.style.overflow = '';
-            };
-            agreeBtn.onclick = close;
-            disagreeBtn.onclick = close;
-            if (linkBtn) {
-                linkBtn.onclick = (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    agreeBtn.textContent = '知道了';
-                    disagreeBtn.textContent = '关闭';
-                    modal.style.display = 'flex';
-                    document.body.style.overflow = 'hidden';
-                };
+        function updateTrialHud(data) {
+            const hud = document.getElementById('trialHud');
+            const elIdle = document.getElementById('trialHudIdle');
+            const elActive = document.getElementById('trialHudActive');
+            const elExpired = document.getElementById('trialHudExpired');
+            if (!hud || !elIdle || !elActive || !elExpired) return;
+            const licensed =
+                data.license_activated === true
+                || (data.activated === true && data.trial_active === false && !data.trial_expired);
+            if (licensed) {
+                hud.style.display = 'none';
+                return;
             }
+            hud.style.display = 'flex';
+            const act = !!data.trial_active;
+            const exp = !!data.trial_expired;
+            const never = data.trial_never_started !== undefined
+                ? !!data.trial_never_started
+                : (!act && !exp);
+            const showIdle = never && !act;
+            const showActive = act;
+            const showExpired = !never && !act && exp;
+            elIdle.style.display = showIdle ? 'flex' : 'none';
+            elActive.style.display = showActive ? 'flex' : 'none';
+            elExpired.style.display = showExpired ? 'flex' : 'none';
+        }
+
+        function initTrialHud() {
+            const startBtn = document.getElementById('startTrialBtn');
+            if (startBtn) startBtn.addEventListener('click', () => openTrialGateModal());
+            configureAgreementModalForViewer();
+            bindEulaHelpButtons();
         }
 
         function updateLocalIpRowFromAccess(data) {
@@ -478,6 +509,26 @@
             });
         }
 
+        /** 鼠标监听行：权限已全部授予时与「运行中」同为绿点；仅未授权或无监听为红 */
+        function applyMouseStatusRow(data) {
+            const mouseDot = document.getElementById('mouseDot');
+            const mouseTextEl = document.getElementById('mouseText');
+            const mp = data.mouse_permission || {};
+            const listenerOn = !!data.mouse_listener_status;
+            const permsOk = !!mp.all_granted;
+            const dotOk = listenerOn || permsOk;
+            if (mouseDot) mouseDot.className = 'status-dot ' + (dotOk ? 'online' : 'offline');
+            if (!mouseTextEl) return;
+            if (listenerOn) {
+                mouseTextEl.textContent = '运行中';
+            } else if (permsOk) {
+                mouseTextEl.textContent = mp.message || '权限已就绪';
+            } else {
+                const hint = mp.message || data.mouse_permission_hint || '';
+                mouseTextEl.textContent = hint || '已停止';
+            }
+        }
+
         async function loadStatus() {
             try {
                 const res = await fetch('/api/desktop/status');
@@ -491,14 +542,7 @@
                 } else {
                     setStatus('hotspotDot', 'hotspotText', false, '', '未连接');
                 }
-                setStatus('mouseDot', 'mouseText', data.mouse_listener_status, '运行中', '已停止');
-                const permissionHint = (data.mouse_permission && data.mouse_permission.message)
-                    || data.mouse_permission_hint
-                    || '';
-                if (!data.mouse_listener_status && permissionHint) {
-                    const mouseText = document.getElementById('mouseText');
-                    if (mouseText) mouseText.textContent = permissionHint;
-                }
+                applyMouseStatusRow(data);
             } catch (e) {
                 console.error('加载状态失败:', e);
             }
@@ -512,32 +556,37 @@
         }
 
         async function loadActivationStatus() {
+            const gen = ++activationStatusFetchGen;
             try {
                 const response = await fetch('/api/activation/status', { cache: 'no-store' });
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const data = await response.json();
-                let activated = normalizeActivationFlag(data.activated);
+                if (gen !== activationStatusFetchGen) return;
 
-                // 仅在“未激活 -> 已激活”的方向做二次确认，避免恢复窗口时瞬时误跳。
-                if (lastActivationUiState === false && activated === true) {
+                let fullyUnlocked = computeFullyUnlocked(data);
+
+                // 从「未解锁」变为「已解锁」时二次拉取确认（含首次 null→true，对齐最小化误跳修复）
+                if (lastActivationUiState !== true && fullyUnlocked === true) {
                     try {
                         const confirmRes = await fetch('/api/activation/status', { cache: 'no-store' });
+                        if (gen !== activationStatusFetchGen) return;
                         if (confirmRes.ok) {
                             const confirmData = await confirmRes.json();
-                            activated = normalizeActivationFlag(confirmData.activated);
+                            fullyUnlocked = computeFullyUnlocked(confirmData);
                         } else {
-                            activated = false;
+                            fullyUnlocked = false;
                         }
                     } catch (_) {
-                        activated = false;
+                        fullyUnlocked = false;
                     }
                 }
-                data.activated = activated;
-                lastActivationUiState = activated;
+                if (gen !== activationStatusFetchGen) return;
 
-                // 左上角倒计时（试用中显示；用本地 tick 实现每秒变化）
-                // 注意：后端在试用期内对外会表现为 activated=true，但 trial_active 仍为 true，
-                // 因此这里不能用 !data.activated 作为显示条件。
+                data.activated = fullyUnlocked;
+                lastActivationUiState = fullyUnlocked;
+
+                updateTrialHud(data);
+
                 if (!!data.trial_active) {
                     startTrialCountdown(data.trial_remaining_seconds);
                 } else {
@@ -548,11 +597,11 @@
                 const activationText = document.getElementById('activationText');
                 if (!activationDot || !activationText) return;
 
-                const needBlock = !data.activated;
+                const needBlock = !fullyUnlocked;
                 const unactivatedMsg = document.getElementById('unactivatedStatusText');
                 if (data.message && unactivatedMsg) unactivatedMsg.textContent = data.message;
 
-                if (data.activated) {
+                if (fullyUnlocked) {
                     activationDot.className = 'status-dot online';
                     activationText.textContent = '已激活';
                     document.getElementById('activatedStatus').style.display = 'block';
@@ -576,7 +625,9 @@
                     document.getElementById('copyBtn').style.display = 'block';
 
                     await loadAccessInfo();
+                    if (gen !== activationStatusFetchGen) return;
                     await loadStatus();
+                    if (gen !== activationStatusFetchGen) return;
                 } else {
                     activationDot.className = 'status-dot offline';
                     activationText.textContent = '未激活';
@@ -615,7 +666,7 @@
                             const sr = await fetch('/api/desktop/status');
                             const sd = await sr.json();
                             setStatus('serverDot', 'serverText', sd.server_running, '运行中', '已停止');
-                            setStatus('mouseDot', 'mouseText', sd.mouse_listener_status, '运行中', '已停止');
+                            applyMouseStatusRow(sd);
                         } catch (e) { /* ignore */ }
                     } else {
                         const qrcodeElement = document.getElementById('qrcode');
@@ -632,7 +683,9 @@
                         }
                         document.getElementById('copyBtn').style.display = 'block';
                         await loadAccessInfo();
+                        if (gen !== activationStatusFetchGen) return;
                         await loadStatus();
+                        if (gen !== activationStatusFetchGen) return;
                     }
                 }
             } catch (error) {
@@ -758,15 +811,13 @@
 
         (async function boot() {
             try {
-                // 首次打开：必须同意协议才能继续；不同意则退出应用。
-                // 同意后：后端会在 /api/desktop/eula-accept 时刻开始试用期。
-                const eulaOk = await ensureEulaAccepted();
-                if (!eulaOk) return;
-
+                initTrialHud();
                 initCopyBtn();
                 initActivationButtons();
                 initPortSettings();
                 await loadPortSettings();
+                await loadStatus();
+                await loadAccessInfo();
                 await loadActivationStatus();
             } catch (e) {
                 console.error('初始化失败:', e);

@@ -140,17 +140,14 @@ async def root(request: Request) -> HTMLResponse:
 
 
 def _forbid_phone_surface_if_unactivated(request: Request):
-    """未激活时，非本机不得获取手机页（避免拼链接访问）。不区分网段，私有网络场景一律同策略。"""
-    client_ip = request.client.host
-    if client_ip in ("127.0.0.1", "::1"):
-        return None
+    """未激活或未在试用期（含未同意协议等）时不提供手机页；本机与局域网同一策略，避免本机绕过。"""
     try:
         from routes.activation import is_phone_allowed_by_activation_or_trial
 
         if is_phone_allowed_by_activation_or_trial():
             return None
     except Exception:
-        return None
+        pass  # 与激活模块一致：异常时不放行页面
     return HTMLResponse(
         status_code=403,
         content=(

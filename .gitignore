@@ -16,3 +16,6 @@ electron/dist/
 
 # 激活码签发私钥（仅维护者本地保留，勿提交）
 activation_ed25519_private.pem
+
+# 许可证签发脚本（仅维护者本地使用，勿提交）
+scripts/issue_license.py

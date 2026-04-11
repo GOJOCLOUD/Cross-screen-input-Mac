@@ -60,17 +60,37 @@ async def post_eula_accept() -> Dict[str, Any]:
                 ensure_ascii=False,
                 indent=2,
             )
-        # 同意协议后再启动试用期：试用开始时间与“同意协议”绑定，而不是首次访问激活接口绑定
-        try:
-            from routes.activation import start_trial_if_needed
-
-            start_trial_if_needed()
-        except Exception:
-            pass
+        # 试用开始由用户点击「开始试用」后 POST /trial-start，不在此处自动开跑
         return {"success": True, "version": EULA_VERSION}
     except Exception as e:
         app_logger.error(f"写入 eula 失败: {e}", "desktop_api")
         raise HTTPException(status_code=500, detail="保存失败") from e
+
+
+@router.post("/trial-start")
+async def post_trial_start() -> Dict[str, Any]:
+    """
+    在用户已同意当前版本协议的前提下，开始试用（仅首次写入 trial_started_at）。
+    与「仅保存协议」分离：正常流程为同意协议后再点此逻辑，或由前端连续调用 eula-accept + trial-start。
+    """
+    accepted = False
+    if os.path.isfile(EULA_FILE):
+        try:
+            with open(EULA_FILE, "r", encoding="utf-8") as f:
+                j = json.load(f)
+            accepted = bool(j.get("accepted")) and j.get("version") == EULA_VERSION
+        except Exception:
+            pass
+    if not accepted:
+        raise HTTPException(status_code=400, detail="请先同意用户协议")
+    try:
+        from routes.activation import start_trial_if_needed
+
+        start_trial_if_needed()
+        return {"success": True}
+    except Exception as e:
+        app_logger.error(f"trial-start 失败: {e}", "desktop_api")
+        raise HTTPException(status_code=500, detail="试用启动失败") from e
 
 
 @router.get("/access-info")

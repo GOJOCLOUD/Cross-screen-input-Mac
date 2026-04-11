@@ -70,17 +70,18 @@ async function loadStatus() {
             portText.textContent = data.port || '--';
         }
         
-        // 鼠标监听状态
+        // 鼠标监听状态（与 desktop.html 一致：权限已全部授予时亦为绿点）
         const mouseDot = document.getElementById('mouseDot');
         const mouseText = document.getElementById('mouseText');
-        if (mouseDot && mouseText) {
-            if (data.mouse_listening) {
-                mouseDot.className = 'status-dot online';
-                mouseText.textContent = '运行中';
-            } else {
-                mouseDot.className = 'status-dot offline';
-                mouseText.textContent = '已停止';
-            }
+        const mp = data.mouse_permission || {};
+        const listenerOn = !!data.mouse_listener_status;
+        const permsOk = !!mp.all_granted;
+        const dotOk = listenerOn || permsOk;
+        if (mouseDot) mouseDot.className = 'status-dot ' + (dotOk ? 'online' : 'offline');
+        if (mouseText) {
+            if (listenerOn) mouseText.textContent = '运行中';
+            else if (permsOk) mouseText.textContent = mp.message || '权限已就绪';
+            else mouseText.textContent = mp.message || data.mouse_permission_hint || '已停止';
         }
         
         // 当前监听端口

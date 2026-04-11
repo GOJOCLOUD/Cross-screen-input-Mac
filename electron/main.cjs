@@ -106,12 +106,17 @@ function getBackendExecutable() {
 
 /** 与 Electron 用户数据目录一致，激活文件随卸载删除（见 package.json deleteAppDataOnUninstall） */
 function getBackendEnv() {
-  return {
+  const env = {
     ...process.env,
     KPSR_USER_DATA: app.getPath('userData'),
     KPSR_PORT: String(backendPort),
     KPSR_INSTANCE_TOKEN: launchInstanceToken,
   };
+  // 安装包内默认试用 30 秒（与云打包产物一致）；本地开发跑源码后端不受影响；可用环境变量覆盖
+  if (app.isPackaged && !(String(process.env.KPSR_TRIAL_SECONDS || '').trim())) {
+    env.KPSR_TRIAL_SECONDS = '30';
+  }
+  return env;
 }
 
 function startBackend() {
