@@ -1194,6 +1194,21 @@ def reload_and_restart_listener():
     return start_listener()
 
 
+def force_restart_listener_for_desktop() -> dict:
+    """
+    桌面「重新检测并启动监听」：先静默刷新权限快照，再停后启。
+    避免仅调用 /reload 时在「已在运行」分支只热重载映射、用户感觉按钮无反应。
+    """
+    if is_mac:
+        refresh_macos_permissions_silent()
+    try:
+        if is_listener_running():
+            stop_listener()
+    except Exception:
+        pass
+    return start_listener()
+
+
 def get_permission_snapshot() -> dict:
     """供桌面状态页读取的权限快照。"""
     if is_mac:
@@ -1242,6 +1257,12 @@ async def api_get_status():
 async def api_reload_mappings():
     """重新加载按键映射"""
     return reload_and_restart_listener()
+
+
+@router.post("/restart")
+async def api_force_restart_listener():
+    """重新检测权限并重启监听（桌面专用，见 force_restart_listener_for_desktop）。"""
+    return force_restart_listener_for_desktop()
 
 @router.get("/mappings")
 async def api_get_mappings():

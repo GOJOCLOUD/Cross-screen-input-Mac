@@ -520,9 +520,16 @@
             if (retryBtn) {
                 retryBtn.addEventListener('click', async () => {
                     try {
-                        await fetch('/api/mouse-listener/reload', { method: 'POST' });
+                        retryBtn.disabled = true;
+                        const res = await fetch('/api/mouse-listener/restart', { method: 'POST' });
+                        const j = await res.json().catch(() => ({}));
+                        if (!res.ok) console.warn('restart listener:', res.status, j);
                         await loadStatus();
-                    } catch (e) { console.error(e); }
+                    } catch (e) {
+                        console.error(e);
+                    } finally {
+                        retryBtn.disabled = false;
+                    }
                 });
             }
         }
