@@ -19,3 +19,5 @@ activation_ed25519_private.pem
 
 # 许可证签发脚本（仅维护者本地使用，勿提交）
 scripts/issue_license.py
+scripts/license_issuer_web.py
+scripts/start_license_issuer_web.sh
