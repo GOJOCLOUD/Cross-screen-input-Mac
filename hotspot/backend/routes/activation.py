@@ -21,7 +21,7 @@ router = APIRouter()
 
 # ===== Trial / Free usage (offline) =====
 # 默认 7 天试用（发布版）。可用环境变量覆盖，方便本地/CI 快速回归。
-DEFAULT_TRIAL_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_TRIAL_SECONDS = 30
 TRIAL_SECONDS_ENV_KEYS = ("KPSR_TRIAL_SECONDS", "KPSR_TRIAL_SECS")
 TRIAL_CLOCK_ROLLBACK_TOLERANCE_SECONDS = 2
 
@@ -492,8 +492,7 @@ def get_activation_status():
     """
     获取激活状态；uuid 始终为当前机器实时读取。
     """
-    from utils.relay_station import ensure_station_for_current_network, get_current_station
-    from config import HTTP_PORT
+    from utils.relay_station import get_current_station, get_effective_mode
 
     status = load_activation_status()
     raw_activated = _coerce_activated_flag(status.get("activated", False))
@@ -501,9 +500,13 @@ def get_activation_status():
     # 试用期内，对外表现为“已激活”
     activated = bool(raw_activated or bool(trial.get("trial_active", False)))
     device_uuid = get_motherboard_uuid()
-    ensure_station_for_current_network(port=HTTP_PORT)
-    station = get_current_station()
-    effective = getattr(station, "mode", "unknown") or "unknown"
+    # 不在此处调用 ensure_station_for_current_network：查询激活状态不应切换热点/LAN 中转站实例，
+    # 否则与自选 IPv4、IP 缓存刷新叠加会反复切换模式，前端误判「跳激活」。
+    try:
+        station = get_current_station()
+        effective = getattr(station, "mode", None) or get_effective_mode()
+    except Exception:
+        effective = get_effective_mode()
     phone_requires_activation = not activated
 
     rem = int(trial.get("trial_remaining_seconds", 0) or 0)

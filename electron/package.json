@@ -1,6 +1,6 @@
 {
   "name": "kpsr-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "KPSR 跨屏输入 — Electron 桌面端",
   "main": "main.cjs",
   "author": "GOJOCLOUD",

@@ -239,6 +239,8 @@
         // 激活/试用解锁态：窗口最小化、改尺寸等可能触发并发请求，需防陈旧响应与误跳「已激活」。
         let lastActivationUiState = null; // true / false / null（表示「已解锁」：正式激活或试用进行中）
         let activationStatusFetchGen = 0;
+        /** 程序化重绘 IPv4 下拉时部分环境会合成 change，抑制以免重复 POST /display-ipv4 */
+        let suppressDisplayIpv4Change = false;
         // 试用倒计时：使用本地 tick 保证每秒变化；到 0 后自动刷新激活状态
         let trialExpiryAtMs = null;
         let trialTickTimer = null;
@@ -448,24 +450,29 @@
         function fillDisplayIpv4Select(data) {
             const sel = document.getElementById('displayIpv4Select');
             if (!sel) return;
-            const cands = Array.isArray(data.ipv4_candidates) ? data.ipv4_candidates : [];
-            const manual = data.display_ipv4_manual || '';
-            const mode = data.display_ipv4_mode || 'auto';
-            sel.innerHTML = '';
-            const optAuto = document.createElement('option');
-            optAuto.value = '';
-            optAuto.textContent = '自动';
-            sel.appendChild(optAuto);
-            cands.forEach(function (ip) {
-                const o = document.createElement('option');
-                o.value = ip;
-                o.textContent = ip;
-                sel.appendChild(o);
-            });
-            if (mode === 'manual' && manual && cands.indexOf(manual) !== -1) {
-                sel.value = manual;
-            } else {
-                sel.value = '';
+            suppressDisplayIpv4Change = true;
+            try {
+                const cands = Array.isArray(data.ipv4_candidates) ? data.ipv4_candidates : [];
+                const manual = data.display_ipv4_manual || '';
+                const ipv4PickMode = data.display_ipv4_mode || 'auto';
+                sel.innerHTML = '';
+                const optAuto = document.createElement('option');
+                optAuto.value = '';
+                optAuto.textContent = '自动';
+                sel.appendChild(optAuto);
+                cands.forEach(function (ip) {
+                    const o = document.createElement('option');
+                    o.value = ip;
+                    o.textContent = ip;
+                    sel.appendChild(o);
+                });
+                if (ipv4PickMode === 'manual' && manual && cands.indexOf(manual) !== -1) {
+                    sel.value = manual;
+                } else {
+                    sel.value = '';
+                }
+            } finally {
+                queueMicrotask(function () { suppressDisplayIpv4Change = false; });
             }
         }
 
@@ -474,6 +481,7 @@
             if (!sel || sel._kpsrBound) return;
             sel._kpsrBound = true;
             sel.addEventListener('change', async function () {
+                if (suppressDisplayIpv4Change) return;
                 const msg = document.getElementById('displayIpv4Msg');
                 try {
                     const v = sel.value;
@@ -496,14 +504,14 @@
                         msg.style.color = '#16a34a';
                         setTimeout(function () { msg.hidden = true; }, 2000);
                     }
-                    await loadAccessInfo();
+                    await refreshNetworkPanel();
                 } catch (e) {
                     if (msg) {
                         msg.textContent = e.message || String(e);
                         msg.hidden = false;
                         msg.style.color = '#dc2626';
                     }
-                    await loadAccessInfo();
+                    await refreshNetworkPanel();
                 }
             });
         }
@@ -783,6 +791,12 @@
             if (text) text.textContent = isOnline ? onlineText : offlineText;
         }
 
+        /** 二维码/链接、本机 IPv4 行与 /status 行：与激活展示解耦，仅网络区刷新 */
+        async function refreshNetworkPanel() {
+            await loadAccessInfo();
+            await loadStatus();
+        }
+
         async function loadActivationStatus() {
             const gen = ++activationStatusFetchGen;
             try {
@@ -852,9 +866,7 @@
                     }
                     document.getElementById('copyBtn').style.display = 'block';
 
-                    await loadAccessInfo();
-                    if (gen !== activationStatusFetchGen) return;
-                    await loadStatus();
+                    await refreshNetworkPanel();
                     if (gen !== activationStatusFetchGen) return;
                 } else {
                     activationDot.className = 'status-dot offline';
@@ -911,9 +923,7 @@
                             linkDisplay.style.color = '';
                         }
                         document.getElementById('copyBtn').style.display = 'block';
-                        await loadAccessInfo();
-                        if (gen !== activationStatusFetchGen) return;
-                        await loadStatus();
+                        await refreshNetworkPanel();
                         if (gen !== activationStatusFetchGen) return;
                     }
                 }
@@ -1033,8 +1043,7 @@
         /** 不再定时轮询激活状态，避免界面闪烁；仅在打开页面及激活/取消激活后刷新 */
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) return;
-            loadStatus();
-            loadAccessInfo();
+            void refreshNetworkPanel();
             loadActivationStatus();
         });
 
@@ -1048,8 +1057,7 @@
                 initDisplayIpv4Select();
                 await initLaunchAtLogin();
                 await loadPortSettings();
-                await loadStatus();
-                await loadAccessInfo();
+                await refreshNetworkPanel();
                 await loadActivationStatus();
             } catch (e) {
                 console.error('初始化失败:', e);
