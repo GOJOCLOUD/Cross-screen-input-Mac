@@ -219,12 +219,31 @@ async def get_desktop_settings() -> Dict[str, Any]:
     }
 
 
+def _require_license_activated_for_network_override() -> None:
+    """手动选用 IPv4 / 切换连接模式仅允许正式激活码用户，避免试用或未激活时误触接口。"""
+    try:
+        from routes.activation import load_activation_status, _coerce_activated_flag
+
+        st = load_activation_status()
+        if not _coerce_activated_flag(st.get("activated", False)):
+            raise HTTPException(
+                status_code=403,
+                detail="请使用激活码正式激活后方可使用此功能",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"校验激活状态失败: {e}", "desktop_api")
+        raise HTTPException(status_code=403, detail="无法校验激活状态") from e
+
+
 @router.post("/display-ipv4")
 async def set_display_ipv4(req: DisplayIpv4Request) -> Dict[str, Any]:
     """
     从当前检测到的私网 IPv4 中选一个作为二维码/链接展示地址；传空则恢复自动。
     立即生效，无需重启。
     """
+    _require_license_activated_for_network_override()
     raw = req.display_ipv4
     if raw is None or str(raw).strip() == "":
         if not save_display_ipv4_override(""):
@@ -289,6 +308,7 @@ async def set_mode(request: ModeRequest) -> Dict[str, Any]:
     - hotspot: 强制热点直连
     - lan: 强制局域网中转
     """
+    _require_license_activated_for_network_override()
     mode = request.mode
     if mode not in ("auto", "hotspot", "lan"):
         raise HTTPException(status_code=400, detail="不支持的模式")

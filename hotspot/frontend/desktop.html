@@ -74,9 +74,10 @@
             <div class="status-row" style="align-items:flex-start; flex-wrap:wrap;">
                 <span class="status-label" style="padding-top:10px;">选用地址</span>
                 <span class="status-value" style="flex:1; min-width:200px;">
-                    <select id="displayIpv4Select" class="display-ipv4-select" aria-label="选用本机 IPv4"></select>
+                    <select id="displayIpv4Select" class="display-ipv4-select" aria-label="选用本机 IPv4" disabled></select>
                 </span>
             </div>
+            <p class="launch-at-login-msg" id="displayIpv4LockHint" hidden style="color:#737373;">使用<strong>激活码正式激活</strong>后方可手动切换「自动 / 固定地址」；试用期内与本机未激活时不可操作，避免界面状态异常。</p>
             <p class="launch-at-login-msg" id="displayIpv4Msg" hidden></p>
         </div>
 
@@ -322,6 +323,18 @@
             if (normalizeActivationFlag(d.license_activated)) return true;
             if (normalizeActivationFlag(d.trial_active)) return true;
             return false;
+        }
+
+        /** 仅正式激活码（license_activated）可手动选用 IPv4；试用与未激活均锁死，避免切换网段触发界面误判 */
+        function applyDisplayIpv4UiLock(licenseActivated) {
+            const sel = document.getElementById('displayIpv4Select');
+            const hint = document.getElementById('displayIpv4LockHint');
+            const lic = normalizeActivationFlag(licenseActivated);
+            if (sel) {
+                sel.disabled = !lic;
+                sel.setAttribute('aria-disabled', lic ? 'false' : 'true');
+            }
+            if (hint) hint.hidden = lic;
         }
 
         function hideAgreementModal() {
@@ -830,6 +843,8 @@
                 data.activated = fullyUnlocked;
                 lastActivationUiState = fullyUnlocked;
 
+                applyDisplayIpv4UiLock(data.license_activated);
+
                 updateTrialHud(data);
 
                 if (!!data.trial_active) {
@@ -914,6 +929,7 @@
                 }
             } catch (error) {
                 console.error('加载激活状态失败:', error);
+                applyDisplayIpv4UiLock(false);
                 const activationDot = document.getElementById('activationDot');
                 const activationText = document.getElementById('activationText');
                 if (activationDot) activationDot.className = 'status-dot offline';
