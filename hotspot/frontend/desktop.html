@@ -42,7 +42,7 @@
     <div class="container">
         <header class="header">
             <h1 class="title">跨屏输入</h1>
-            <p class="version">v1.0</p>
+            <p class="version">v1.0.1</p>
         </header>
 
         <!-- 二维码 -->
@@ -132,6 +132,20 @@
                 <button class="copy-btn" id="savePortBtn" type="button">保存</button>
             </div>
             <div class="copy-feedback" id="portSaveMsg"></div>
+        </div>
+
+        <!-- 本机：开机自启动（Electron 打包版） -->
+        <div class="card" id="launchAtLoginCard" hidden>
+            <div class="card-title">本机</div>
+            <ul class="info-list" style="margin-bottom:12px;">
+                <li>勾选后将在<strong>登录系统后自动启动</strong>本程序（与系统「登录项」/ 启动项一致）。</li>
+                <li id="launchAtLoginDevHint" hidden>当前为开发运行，无法写入系统开机启动；请使用<strong>安装版</strong>再试。</li>
+            </ul>
+            <label class="launch-at-login-label" for="launchAtLoginCheckbox">
+                <input type="checkbox" id="launchAtLoginCheckbox" />
+                <span>开机自动启动</span>
+            </label>
+            <p class="launch-at-login-msg" id="launchAtLoginMsg" hidden></p>
         </div>
 
         <!-- 网络说明（仅两种连接方式：热点 / 私有网络，无模式切换） -->
@@ -534,6 +548,67 @@
             }
         }
 
+        async function initLaunchAtLogin() {
+            const card = document.getElementById('launchAtLoginCard');
+            const cb = document.getElementById('launchAtLoginCheckbox');
+            const devHint = document.getElementById('launchAtLoginDevHint');
+            const msg = document.getElementById('launchAtLoginMsg');
+            if (!card || !cb) return;
+
+            const api = window.kpsrDesktop;
+            if (!api || typeof api.getLaunchAtLogin !== 'function') {
+                return;
+            }
+
+            card.hidden = false;
+
+            function showMsg(text, isError) {
+                if (!msg) return;
+                msg.textContent = text || '';
+                msg.hidden = !text;
+                msg.style.color = isError ? '#dc2626' : '#16a34a';
+            }
+
+            try {
+                const st = await api.getLaunchAtLogin();
+                const supported = st && st.supported !== false;
+                if (devHint) devHint.hidden = supported;
+                cb.disabled = !supported;
+                cb.checked = !!(st && st.openAtLogin);
+                if (!supported) {
+                    showMsg('');
+                    return;
+                }
+                showMsg('');
+            } catch (e) {
+                console.error(e);
+                cb.disabled = true;
+                if (devHint) devHint.hidden = false;
+                showMsg('无法读取开机启动设置', true);
+                return;
+            }
+
+            cb.addEventListener('change', async () => {
+                const want = cb.checked;
+                showMsg('');
+                try {
+                    const r = await api.setLaunchAtLogin(want);
+                    if (r && r.ok) {
+                        cb.checked = !!r.openAtLogin;
+                        showMsg('已保存', false);
+                        setTimeout(() => { showMsg(''); }, 2000);
+                    } else {
+                        cb.checked = !want;
+                        showMsg((r && r.message) || '设置失败', true);
+                    }
+                } catch (err) {
+                    console.error(err);
+                    cb.checked = !want;
+                    showMsg('设置失败', true);
+                }
+            });
+        }
+
         function initPortSettings() {
             const btn = document.getElementById('savePortBtn');
             const msg = document.getElementById('portSaveMsg');
@@ -890,6 +965,7 @@
                 initActivationButtons();
                 initPortSettings();
                 initPermissionMacHelp();
+                await initLaunchAtLogin();
                 await loadPortSettings();
                 await loadStatus();
                 await loadAccessInfo();

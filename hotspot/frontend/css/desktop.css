@@ -159,6 +159,35 @@ body {
     font-weight: 500;
 }
 
+/* 本机：开机自启动 */
+.launch-at-login-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: #1a1a1a;
+    user-select: none;
+}
+
+.launch-at-login-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #1a1a1a;
+}
+
+.launch-at-login-label input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.launch-at-login-msg {
+    margin-top: 10px;
+    font-size: 13px;
+}
+
 .status-dot {
     width: 8px;
     height: 8px;

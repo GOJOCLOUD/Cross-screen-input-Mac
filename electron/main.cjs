@@ -59,6 +59,57 @@ ipcMain.handle('kpsr-quit', () => {
 });
 
 /**
+ * 开机自启动：仅对打包安装后的应用可靠（开发模式下 exec 为 Electron，避免写入系统登录项）。
+ * 使用 Electron app.setLoginItemSettings / getLoginItemSettings（macOS「登录项」、Windows 启动等）。
+ */
+ipcMain.handle('kpsr-get-launch-at-login', () => {
+  try {
+    const s = app.getLoginItemSettings();
+    return {
+      supported: app.isPackaged,
+      openAtLogin: !!s.openAtLogin,
+      openAsHidden: !!s.openAsHidden,
+      executableWillLaunchAtLogin:
+        typeof s.executableWillLaunchAtLogin === 'boolean' ? s.executableWillLaunchAtLogin : undefined,
+    };
+  } catch (e) {
+    return {
+      supported: app.isPackaged,
+      openAtLogin: false,
+      error: String(e && e.message ? e.message : e),
+    };
+  }
+});
+
+ipcMain.handle('kpsr-set-launch-at-login', (_event, openAtLogin) => {
+  if (!app.isPackaged) {
+    return {
+      ok: false,
+      supported: false,
+      message: '开发模式下无法设置开机启动，请使用打包安装版。',
+    };
+  }
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: !!openAtLogin,
+      openAsHidden: false,
+    });
+    const s = app.getLoginItemSettings();
+    return {
+      ok: true,
+      supported: true,
+      openAtLogin: !!s.openAtLogin,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      supported: true,
+      message: String(e && e.message ? e.message : e),
+    };
+  }
+});
+
+/**
  * 解析后端监听端口（须在 app.ready 后调用，以便读取 userData/settings.json）
  */
 function readConfiguredPort() {
