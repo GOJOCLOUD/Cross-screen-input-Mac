@@ -323,6 +323,56 @@ def save_http_port(port: int) -> bool:
         return False
 
 
+def get_display_ipv4_override() -> str:
+    """
+    用户手动选择的「展示用手机访问的」本机 IPv4；空字符串表示自动。
+    存于 USER_DATA_DIR/settings.json 的 display_ipv4 字段。
+    """
+    settings_path = os.path.join(USER_DATA_DIR, "settings.json")
+    try:
+        if os.path.isfile(settings_path):
+            with open(settings_path, "r", encoding="utf-8") as f:
+                j = json.load(f)
+            v = j.get("display_ipv4")
+            if v is None:
+                return ""
+            return str(v).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def save_display_ipv4_override(ip: str) -> bool:
+    """
+    写入展示用 IPv4；传空字符串表示恢复自动。
+    立即生效，无需重启后端（由 relay_station 每次解析时读取）。
+    """
+    try:
+        settings_path = os.path.join(USER_DATA_DIR, "settings.json")
+        data: dict = {}
+        if os.path.isfile(settings_path):
+            with open(settings_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        ip = (ip or "").strip()
+        if ip:
+            parts = ip.split(".")
+            if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                return False
+            from utils.relay_station import is_private_ip
+
+            if not is_private_ip(ip):
+                return False
+            data["display_ipv4"] = ip
+        else:
+            data.pop("display_ipv4", None)
+        os.makedirs(USER_DATA_DIR, exist_ok=True)
+        with open(settings_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
 # 进程启动时解析一次；改端口需重启进程
 HTTP_PORT = get_http_port()
 
@@ -406,4 +456,6 @@ __all__ = [
     "CHROMIUM_FORBIDDEN_WEB_PORTS",
     "is_chromium_forbidden_web_port",
     "ensure_http_port_allowed_or_exit",
+    "get_display_ipv4_override",
+    "save_display_ipv4_override",
 ]

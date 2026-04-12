@@ -31,7 +31,94 @@ _manual_mode: Optional[str] = None
 # 本机私有 IP 列表缓存（模式判定须看「全部网卡」，不能只看列表首项）
 _cached_private_ip_list: Optional[list] = None
 _cached_primary_ip_at: float = 0
-_PRIMARY_IP_TTL_SEC = 30
+# 换热点/插拔网卡后，枚举结果会变短；TTL 过长会导致界面短时间仍显示旧 IP
+_PRIMARY_IP_TTL_SEC = 12
+
+# Windows ipconfig 适配器标题：含以下关键字则整块跳过（WSL/Hyper-V 等虚拟网卡，可能与 WLAN 同用 10.x）
+_WIN_IPCONFIG_SKIP_ADAPTER_TITLE = re.compile(
+    r"vEthernet|WSL|Hyper-V|VirtualBox|VMware|\bDocker\b|Host-Only|仅主机",
+    re.I,
+)
+
+
+def _collect_private_ips_windows_ipconfig(out: str) -> list:
+    """
+    按 ipconfig 输出分段，跳过常见虚拟网卡标题块后再提取 IPv4。
+    避免 WSL 将来把虚拟网卡配成 10.x 时，与真实 WLAN 的 10.x 混淆（仅靠「优先 10 段」不够）。
+    """
+    private_ips: list = []
+    if not (out or "").strip():
+        return private_ips
+    blocks = re.split(r"\r?\n\r?\n+", out.strip())
+    ipv4_pat = re.compile(
+        r"IPv4[^\d]*(10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)",
+    )
+    for block in blocks:
+        lines = [ln for ln in block.strip().splitlines() if ln.strip()]
+        if not lines:
+            continue
+        title = lines[0].strip()
+        if _WIN_IPCONFIG_SKIP_ADAPTER_TITLE.search(title):
+            continue
+        for m in ipv4_pat.finditer(block):
+            private_ips.append(m.group(1))
+    return list(dict.fromkeys(private_ips))
+
+
+def _darwin_skip_interface_name(iface: str) -> bool:
+    """跳过回环、桥接、utun、vmnet 等常见虚拟接口（Mac/Linux 风格名）。"""
+    n = (iface or "").strip().lower()
+    if not n:
+        return True
+    if re.match(r"^lo\d*$", n):
+        return True
+    for p in (
+        "bridge",
+        "awdl",
+        "llw",
+        "feth",
+        "vmnet",
+        "utun",
+        "vboxnet",
+        "docker",
+        "virbr",
+        "stf",
+        "gif",
+        "ipsec",
+    ):
+        if n.startswith(p):
+            return True
+    return False
+
+
+def _collect_private_ips_darwin_ifconfig(out: str) -> list:
+    """Darwin ifconfig：按接口块解析，跳过常见虚拟网卡。"""
+    private_ips: list = []
+    if not (out or "").strip():
+        return private_ips
+    buf: list = []
+    blocks: list = []
+    for line in out.splitlines():
+        if line and line[0] not in " \t" and ":" in line:
+            if buf:
+                blocks.append("\n".join(buf))
+            buf = [line]
+        else:
+            if buf:
+                buf.append(line)
+    if buf:
+        blocks.append("\n".join(buf))
+    for block in blocks:
+        first = block.split("\n", 1)[0].strip()
+        iface = first.split(":", 1)[0].strip() if ":" in first else first
+        if _darwin_skip_interface_name(iface):
+            continue
+        private_ips.extend(re.findall(r"inet\s+(10\.\d+\.\d+\.\d+)", block))
+        private_ips.extend(
+            re.findall(r"inet\s+(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)", block)
+        )
+        private_ips.extend(re.findall(r"inet\s+(192\.168\.\d+\.\d+)", block))
+    return list(dict.fromkeys(private_ips))
 
 
 def _collect_private_ips_from_os() -> list:
@@ -44,9 +131,13 @@ def _collect_private_ips_from_os() -> list:
         if system == "Darwin":
             result = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=5)
             out = result.stdout or ""
-            private_ips = re.findall(r"inet\s+(10\.\d+\.\d+\.\d+)", out)
-            private_ips.extend(re.findall(r"inet\s+(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)", out))
-            private_ips.extend(re.findall(r"inet\s+(192\.168\.\d+\.\d+)", out))
+            private_ips = _collect_private_ips_darwin_ifconfig(out)
+            if not private_ips:
+                private_ips = re.findall(r"inet\s+(10\.\d+\.\d+\.\d+)", out)
+                private_ips.extend(
+                    re.findall(r"inet\s+(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)", out)
+                )
+                private_ips.extend(re.findall(r"inet\s+(192\.168\.\d+\.\d+)", out))
         elif system == "Linux":
             result = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=5)
             out = result.stdout or ""
@@ -56,9 +147,18 @@ def _collect_private_ips_from_os() -> list:
         else:
             result = subprocess.run(["ipconfig"], capture_output=True, text=True, timeout=5)
             out = result.stdout or ""
-            private_ips = re.findall(r"IPv4 Address[^\d]*(10\.\d+\.\d+\.\d+)", out)
-            private_ips.extend(re.findall(r"IPv4 Address[^\d]*(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)", out))
-            private_ips.extend(re.findall(r"IPv4 Address[^\d]*(192\.168\.\d+\.\d+)", out))
+            private_ips = _collect_private_ips_windows_ipconfig(out)
+            if not private_ips:
+                # 分段解析失败或极旧格式时，退回全文匹配（仍兼容中英文 IPv4 行）
+                private_ips = re.findall(r"IPv4[^\d]*(10\.\d+\.\d+\.\d+)", out)
+                private_ips.extend(re.findall(r"IPv4[^\d]*(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)", out))
+                private_ips.extend(re.findall(r"IPv4[^\d]*(192\.168\.\d+\.\d+)", out))
+            if not private_ips:
+                private_ips = re.findall(r"(10\.\d+\.\d+\.\d+)", out)
+                private_ips.extend(
+                    re.findall(r"(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)", out)
+                )
+                private_ips.extend(re.findall(r"(192\.168\.\d+\.\d+)", out))
     except Exception:
         pass
     # 去重且保持大致稳定顺序
@@ -82,11 +182,18 @@ def _get_cached_private_ip_list() -> list:
 
 
 def _pick_display_primary_ip(ips: list) -> Optional[str]:
-    """多网卡时优先展示路由器网段 IP，避免展示顺序抖动。"""
+    """
+    多网卡时选一个「更像真实上网网卡」的展示用 IPv4（UDP 探测失败时的兜底）。
+    Windows 上已尽量从 ipconfig 中排除 vEthernet/WSL 等块；仍按 192.168 → 10 → 172 排序。
+    """
     if not ips:
         return None
     for ip in ips:
         if ip.startswith("192.168."):
+            return ip
+    for ip in ips:
+        parts = ip.split(".")
+        if len(parts) == 4 and parts[0] == "10":
             return ip
     for ip in ips:
         parts = ip.split(".")
@@ -211,6 +318,94 @@ def is_private_ip(ip: str) -> bool:
     return False
 
 
+def _udp_source_private_ip(remote_host: str = "8.8.8.8", remote_port: int = 80) -> Optional[str]:
+    """
+    当 ipconfig/ifconfig 解析失败或多网卡难选时，用 UDP connect 取「当前默认路由」对应的源地址，
+    通常即手机热点所连网卡（与 Windows 上 172.18.x / Mac 上 10.x 无关，均可能为私网）。
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect((remote_host, remote_port))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and is_private_ip(ip):
+            return ip
+    except Exception:
+        pass
+    return None
+
+
+def list_ipv4_candidates() -> list:
+    """当前检测到的私网 IPv4 列表（供界面手动选择）；每次调用会刷新 OS 枚举缓存。"""
+    _refresh_private_ip_cache()
+    seen = set()
+    out: list = []
+    for ip in _cached_private_ip_list or []:
+        if ip not in seen:
+            seen.add(ip)
+            out.append(ip)
+    u = _udp_source_private_ip()
+    if u and u not in seen:
+        out.append(u)
+    try:
+        out.sort(key=lambda x: tuple(int(p) for p in x.split(".")))
+    except Exception:
+        out.sort()
+    return out
+
+
+def resolve_display_ipv4_from_candidates(
+    cands: list, manual: Optional[str] = None
+) -> Optional[str]:
+    """在给定候选与可选手动地址下解析展示用 IPv4（避免重复枚举）。"""
+    m = (manual or "").strip() if manual is not None else ""
+    if not m:
+        try:
+            from config import get_display_ipv4_override
+
+            m = (get_display_ipv4_override() or "").strip()
+        except Exception:
+            m = ""
+    if m and is_private_ip(m) and m in cands:
+        return m
+    u = _udp_source_private_ip()
+    if u:
+        return u
+    return _pick_display_primary_ip(cands) if cands else None
+
+
+def resolve_display_ipv4() -> Optional[str]:
+    """
+    最终用于二维码/链接的展示用 IPv4：settings 中 display_ipv4 若在候选列表中则优先，否则 UDP→枚举兜底。
+    """
+    cands = list_ipv4_candidates()
+    return resolve_display_ipv4_from_candidates(cands, None)
+
+
+def _hotspot_best_private_ip() -> Optional[str]:
+    """热点模式展示 IP（与 resolve_display_ipv4 一致，保留旧名供内部引用）。"""
+    return resolve_display_ipv4()
+
+
+def get_ipv4_ui_payload() -> Dict[str, Any]:
+    """供 /access-info 合并：候选列表、当前选用、是否手动。"""
+    try:
+        from config import get_display_ipv4_override
+
+        manual = (get_display_ipv4_override() or "").strip()
+    except Exception:
+        manual = ""
+    cands = list_ipv4_candidates()
+    picked = resolve_display_ipv4_from_candidates(cands, manual)
+    mode = "manual" if manual and manual in cands else "auto"
+    return {
+        "ipv4_candidates": cands,
+        "display_ipv4": picked,
+        "display_ipv4_manual": manual if manual else None,
+        "display_ipv4_mode": mode,
+    }
+
+
 class RelayStation(ABC):
     """中转站抽象：统一访问信息、状态与访问控制，便于切换热点/局域网等模式"""
 
@@ -256,90 +451,23 @@ class HotspotStation(RelayStation):
     def mode(self) -> str:
         return self.MODE
 
-    def _get_private_ip(self) -> Optional[str]:
-        """从本机网卡获取私有网 IP（10/172.16-31/192.168）"""
-        try:
-            import platform
-
-            system = platform.system()
-            private_ips = []
-
-            if system == "Darwin":
-                result = subprocess.run(
-                    ["ifconfig"], capture_output=True, text=True, timeout=5
-                )
-                private_ips = re.findall(r"inet\s+(10\.\d+\.\d+\.\d+)", result.stdout)
-                private_ips.extend(
-                    re.findall(
-                        r"inet\s+(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)",
-                        result.stdout,
-                    )
-                )
-                private_ips.extend(
-                    re.findall(r"inet\s+(192\.168\.\d+\.\d+)", result.stdout)
-                )
-            elif system == "Linux":
-                result = subprocess.run(
-                    ["ifconfig"], capture_output=True, text=True, timeout=5
-                )
-                private_ips = re.findall(r"inet\s+(10\.\d+\.\d+\.\d+)", result.stdout)
-                private_ips.extend(
-                    re.findall(
-                        r"inet\s+(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)",
-                        result.stdout,
-                    )
-                )
-                private_ips.extend(
-                    re.findall(r"inet\s+(192\.168\.\d+\.\d+)", result.stdout)
-                )
-            else:
-                result = subprocess.run(
-                    ["ipconfig"], capture_output=True, text=True, timeout=5
-                )
-                private_ips = re.findall(
-                    r"IPv4 Address[^\d]*(10\.\d+\.\d+\.\d+)", result.stdout
-                )
-                private_ips.extend(
-                    re.findall(
-                        r"IPv4 Address[^\d]*(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)",
-                        result.stdout,
-                    )
-                )
-                private_ips.extend(
-                    re.findall(
-                        r"IPv4 Address[^\d]*(192\.168\.\d+\.\d+)", result.stdout
-                    )
-                )
-                if not private_ips:
-                    private_ips = re.findall(r"(10\.\d+\.\d+\.\d+)", result.stdout)
-                    private_ips.extend(
-                        re.findall(
-                            r"(172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)",
-                            result.stdout,
-                        )
-                    )
-                    private_ips.extend(
-                        re.findall(r"(192\.168\.\d+\.\d+)", result.stdout)
-                    )
-
-            if private_ips:
-                return private_ips[0]
-        except Exception:
-            pass
-        return None
-
     def get_local_ip(self) -> str:
+        ip = _hotspot_best_private_ip()
+        if ip:
+            return ip
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("10.0.0.1", 80))
+            s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()
-            return ip
+            if ip and not str(ip).startswith("127."):
+                return ip
         except Exception:
-            return "localhost"
+            pass
+        return "localhost"
 
     def get_access_info(self) -> Dict[str, Any]:
-        hotspot_ip = self._get_private_ip()
+        hotspot_ip = _hotspot_best_private_ip()
         port = self._port
         if hotspot_ip:
             phone_url = f"http://{hotspot_ip}:{port}/phone"
@@ -356,7 +484,7 @@ class HotspotStation(RelayStation):
         }
 
     def get_status(self) -> Dict[str, Any]:
-        hotspot_ip = self._get_private_ip()
+        hotspot_ip = _hotspot_best_private_ip()
         return {
             "port": self._port,
             "hotspot_connected": hotspot_ip is not None,
@@ -397,10 +525,9 @@ class LanRelayStation(RelayStation):
     def get_local_ip(self) -> str:
         """
         局域网模式下返回本机局域网 IP（手机可访问的地址）。
-        优先用 ifconfig 获取私有网 IP（兼容校园网 192.168.x.x），
-        失败时用 socket 连接外网获取出口 IP 作为备选。
+        与热点模式共用展示 IP 解析（含用户手动选择的 display_ipv4）。
         """
-        ip = _get_primary_private_ip()
+        ip = resolve_display_ipv4()
         if ip:
             return ip
         try:

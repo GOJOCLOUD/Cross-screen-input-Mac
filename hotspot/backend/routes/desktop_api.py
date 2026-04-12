@@ -10,7 +10,7 @@ import json
 import socket
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 from utils.logger import app_logger
 from utils.relay_station import (
@@ -18,12 +18,16 @@ from utils.relay_station import (
     init_relay_station,
     ensure_station_for_current_network,
     get_manual_mode,
+    get_ipv4_ui_payload,
+    list_ipv4_candidates,
+    is_private_ip,
 )
 from config import (
     HTTP_PORT,
     USER_DATA_DIR,
     get_http_port,
     save_http_port,
+    save_display_ipv4_override,
     is_chromium_forbidden_web_port,
 )
 
@@ -102,6 +106,7 @@ async def get_access_info() -> Dict[str, Any]:
         ensure_station_for_current_network(port=HTTP_PORT)
         station = get_current_station()
         data = station.get_access_info()
+        data.update(get_ipv4_ui_payload())
         app_logger.info(
             f"返回访问信息: hotspot_ip={data.get('hotspot_ip')}, port={data.get('port')}",
             "desktop_api",
@@ -109,7 +114,7 @@ async def get_access_info() -> Dict[str, Any]:
         return data
     except Exception as e:
         app_logger.error(f"获取访问信息失败: {e}", "desktop_api")
-        return {
+        err: Dict[str, Any] = {
             "hotspot_ip": None,
             "port": HTTP_PORT,
             "phone_url": f"http://localhost:{HTTP_PORT}/phone",
@@ -117,6 +122,13 @@ async def get_access_info() -> Dict[str, Any]:
             "localhost_url": f"http://localhost:{HTTP_PORT}",
             "error": str(e),
         }
+        try:
+            err.update(get_ipv4_ui_payload())
+        except Exception:
+            err.setdefault("ipv4_candidates", [])
+            err.setdefault("display_ipv4", None)
+            err.setdefault("display_ipv4_mode", "auto")
+        return err
 
 
 @router.get("/status")
@@ -190,6 +202,12 @@ class HttpPortRequest(BaseModel):
     http_port: int
 
 
+class DisplayIpv4Request(BaseModel):
+    """空字符串或省略 display_ipv4 表示恢复自动选用。"""
+
+    display_ipv4: Optional[str] = None
+
+
 @router.get("/settings")
 async def get_desktop_settings() -> Dict[str, Any]:
     """
@@ -199,6 +217,35 @@ async def get_desktop_settings() -> Dict[str, Any]:
         "listening_port": HTTP_PORT,
         "configured_port": get_http_port(),
     }
+
+
+@router.post("/display-ipv4")
+async def set_display_ipv4(req: DisplayIpv4Request) -> Dict[str, Any]:
+    """
+    从当前检测到的私网 IPv4 中选一个作为二维码/链接展示地址；传空则恢复自动。
+    立即生效，无需重启。
+    """
+    raw = req.display_ipv4
+    if raw is None or str(raw).strip() == "":
+        if not save_display_ipv4_override(""):
+            raise HTTPException(status_code=500, detail="保存失败")
+    else:
+        ip = str(raw).strip()
+        if not is_private_ip(ip):
+            raise HTTPException(status_code=400, detail="请选择私网 IPv4")
+        cands = list_ipv4_candidates()
+        if ip not in cands:
+            raise HTTPException(
+                status_code=400,
+                detail="请从当前检测到的地址中选择；若列表未更新请先换网或稍后重试",
+            )
+        if not save_display_ipv4_override(ip):
+            raise HTTPException(status_code=500, detail="保存失败")
+    ensure_station_for_current_network(port=HTTP_PORT)
+    station = get_current_station()
+    data = station.get_access_info()
+    data.update(get_ipv4_ui_payload())
+    return data
 
 
 @router.post("/port")

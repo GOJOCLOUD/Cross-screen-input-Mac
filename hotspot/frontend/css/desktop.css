@@ -188,6 +188,17 @@ body {
     font-size: 13px;
 }
 
+.display-ipv4-select {
+    width: 100%;
+    max-width: 420px;
+    padding: 10px 12px;
+    font-size: 14px;
+    border-radius: 6px;
+    border: 1px solid #e0e0e0;
+    background: #fff;
+    color: #1a1a1a;
+}
+
 .status-dot {
     width: 8px;
     height: 8px;

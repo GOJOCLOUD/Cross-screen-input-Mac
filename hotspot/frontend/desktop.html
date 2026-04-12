@@ -64,6 +64,22 @@
             <div class="copy-feedback" id="copyFeedback">已复制</div>
         </div>
 
+        <!-- 本机访问 IPv4（多网卡 / 虚拟机时可选） -->
+        <div class="card" id="displayIpv4Card">
+            <div class="card-title">本机访问 IPv4</div>
+            <ul class="info-list" style="margin-bottom:12px;">
+                <li>多网卡、虚拟机（WSL、Hyper‑V、Docker 等）时，若二维码链接不对，请在下拉框中选用<strong>与手机同一局域网</strong>的地址。</li>
+                <li>下列选项来自当前系统检测；选「自动」则按程序规则选用。</li>
+            </ul>
+            <div class="status-row" style="align-items:flex-start; flex-wrap:wrap;">
+                <span class="status-label" style="padding-top:10px;">选用地址</span>
+                <span class="status-value" style="flex:1; min-width:200px;">
+                    <select id="displayIpv4Select" class="display-ipv4-select" aria-label="选用本机 IPv4"></select>
+                </span>
+            </div>
+            <p class="launch-at-login-msg" id="displayIpv4Msg" hidden></p>
+        </div>
+
         <!-- 服务状态 -->
         <div class="card">
             <div class="card-title">服务状态</div>
@@ -429,10 +445,74 @@
             }
         }
 
+        function fillDisplayIpv4Select(data) {
+            const sel = document.getElementById('displayIpv4Select');
+            if (!sel) return;
+            const cands = Array.isArray(data.ipv4_candidates) ? data.ipv4_candidates : [];
+            const manual = data.display_ipv4_manual || '';
+            const mode = data.display_ipv4_mode || 'auto';
+            sel.innerHTML = '';
+            const optAuto = document.createElement('option');
+            optAuto.value = '';
+            optAuto.textContent = '自动';
+            sel.appendChild(optAuto);
+            cands.forEach(function (ip) {
+                const o = document.createElement('option');
+                o.value = ip;
+                o.textContent = ip;
+                sel.appendChild(o);
+            });
+            if (mode === 'manual' && manual && cands.indexOf(manual) !== -1) {
+                sel.value = manual;
+            } else {
+                sel.value = '';
+            }
+        }
+
+        function initDisplayIpv4Select() {
+            const sel = document.getElementById('displayIpv4Select');
+            if (!sel || sel._kpsrBound) return;
+            sel._kpsrBound = true;
+            sel.addEventListener('change', async function () {
+                const msg = document.getElementById('displayIpv4Msg');
+                try {
+                    const v = sel.value;
+                    const res = await fetch('/api/desktop/display-ipv4', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ display_ipv4: v ? v : null }),
+                    });
+                    const j = await res.json().catch(function () { return {}; });
+                    if (!res.ok) {
+                        let detail = j.detail != null ? j.detail : '保存失败';
+                        if (Array.isArray(detail)) {
+                            detail = detail.map(function (x) { return (x && x.msg) || JSON.stringify(x); }).join('；');
+                        }
+                        throw new Error(String(detail));
+                    }
+                    if (msg) {
+                        msg.textContent = '已应用';
+                        msg.hidden = false;
+                        msg.style.color = '#16a34a';
+                        setTimeout(function () { msg.hidden = true; }, 2000);
+                    }
+                    await loadAccessInfo();
+                } catch (e) {
+                    if (msg) {
+                        msg.textContent = e.message || String(e);
+                        msg.hidden = false;
+                        msg.style.color = '#dc2626';
+                    }
+                    await loadAccessInfo();
+                }
+            });
+        }
+
         async function loadAccessInfo() {
             try {
                 const res = await fetch('/api/desktop/access-info');
                 const data = await res.json();
+                fillDisplayIpv4Select(data);
                 const linkDisplay = document.getElementById('linkDisplay');
                 const tip = document.querySelector('.qrcode-tip');
                 updateLocalIpRowFromAccess(data);
@@ -965,6 +1045,7 @@
                 initActivationButtons();
                 initPortSettings();
                 initPermissionMacHelp();
+                initDisplayIpv4Select();
                 await initLaunchAtLogin();
                 await loadPortSettings();
                 await loadStatus();
