@@ -19,3 +19,6 @@ activation_ed25519_private.pem
 
 # 本地误生成的构建日志勿提交
 /error.txt
+
+# CI/本地生成的 Windows 图标（由 scripts/gen_windows_icon.py 生成）
+electron/build/icon.ico
