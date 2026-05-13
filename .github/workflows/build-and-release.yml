@@ -379,7 +379,7 @@ jobs:
         run: npm install
 
       - name: Build Electron app (windows x64)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ true }}
         shell: bash
         working-directory: electron
         run: npm run dist:win
