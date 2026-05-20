@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from utils.platform_utils import get_motherboard_uuid
+from utils.activation_state_store import load_secure_state, save_secure_state
 
 router = APIRouter()
 
@@ -66,7 +67,7 @@ LICENSE_FORMAT_PREFIX = "cs1"
 # 打包进客户端的公钥（Raw 32 字节 → Base64）。轮换密钥时同步修改此处并发新包。
 ACTIVATION_PUBLIC_KEY_B64 = "k7fUyHEgw+TwV/XxbvAwJrbbUmjOqnFfppxpAbJD4zA="
 
-# 激活文件路径（使用 config 的 DATA_DIR，兼容打包与多平台）
+# 旧版明文激活文件路径（仅用于迁移读取；新版本不再继续写入明文状态）
 try:
     from config import DATA_DIR
 
@@ -222,14 +223,23 @@ def load_activation_status() -> dict:
     """
     加载激活状态；若许可被篡改或与当前设备不符则自动失效。
     """
+    candidates = []
+    secure = load_secure_state()
+    if secure:
+        candidates.append(secure)
     if os.path.exists(ACTIVATION_FILE):
         try:
             with open(ACTIVATION_FILE, "r", encoding="utf-8") as f:
                 status = json.load(f)
                 if isinstance(status, dict):
-                    return _invalidate_if_broken(status)
+                    candidates.append(status)
         except Exception:
             pass
+    if candidates:
+        from utils.activation_state_store import merge_states
+
+        merged = merge_states(candidates)
+        return _invalidate_if_broken(merged)
     return {"activated": False, "uuid": get_motherboard_uuid(), "license_blob": ""}
 
 
@@ -241,6 +251,10 @@ def _ensure_trial_fields(status: dict) -> dict:
     status = dict(status or {})
     now = _now_ts()
     changed = False
+
+    if status.get("first_seen_at") is None:
+        status["first_seen_at"] = now
+        changed = True
 
     if status.get("trial_duration_seconds") is None:
         status["trial_duration_seconds"] = _trial_duration_seconds()
@@ -472,30 +486,9 @@ def save_activation_status(status: dict) -> bool:
     """
     保存激活状态
     """
-    try:
-        os.makedirs(os.path.dirname(ACTIVATION_FILE), exist_ok=True)
-        payload = json.dumps(status, ensure_ascii=False, indent=2)
-        with _activation_file_lock:
-            tmp_fd, tmp_path = tempfile.mkstemp(
-                prefix="activation.",
-                suffix=".tmp",
-                dir=os.path.dirname(ACTIVATION_FILE),
-            )
-            try:
-                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                    f.write(payload)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, ACTIVATION_FILE)
-            finally:
-                if os.path.exists(tmp_path):
-                    try:
-                        os.remove(tmp_path)
-                    except Exception:
-                        pass
-        return True
-    except Exception:
-        return False
+    normalized = dict(status or {})
+    normalized["updated_at"] = _now_ts()
+    return bool(save_secure_state(normalized))
 
 
 @router.get("/uuid")

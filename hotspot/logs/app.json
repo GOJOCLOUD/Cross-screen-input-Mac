@@ -1,1 +1,93 @@
-[]
+[
+  {
+    "timestamp": "2026-05-16T11:21:47.249141",
+    "level": "INFO",
+    "source": "port_manager",
+    "message": "端口 2345 未被占用",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:21:47.825882",
+    "level": "INFO",
+    "source": "mouse_listener",
+    "message": "加载了 0 个单键映射: {}",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:21:47.826141",
+    "level": "INFO",
+    "source": "mouse_listener",
+    "message": "加载了 0 个序列映射: []",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:21:47.846815",
+    "level": "INFO",
+    "source": "mouse_listener",
+    "message": "macOS 监听器已启动",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:06.056712",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回访问信息: hotspot_ip=10.89.117.197, port=2345",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:06.087449",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回状态信息: server_running=True, mouse_listener=True",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:06.099227",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回状态信息: server_running=True, mouse_listener=True",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:09.577534",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回访问信息: hotspot_ip=10.89.117.197, port=2345",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:09.594199",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回状态信息: server_running=True, mouse_listener=True",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:17.471229",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回访问信息: hotspot_ip=10.89.117.197, port=2345",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:17.491444",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回状态信息: server_running=True, mouse_listener=True",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:17.509851",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回访问信息: hotspot_ip=10.89.117.197, port=2345",
+    "extra": {}
+  },
+  {
+    "timestamp": "2026-05-16T11:22:17.525150",
+    "level": "INFO",
+    "source": "desktop_api",
+    "message": "返回状态信息: server_running=True, mouse_listener=True",
+    "extra": {}
+  }
+]

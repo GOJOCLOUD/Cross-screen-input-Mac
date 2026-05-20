@@ -23,6 +23,7 @@ from utils.logger import app_logger
 from utils.platform_utils import get_platform
 
 from pynput.keyboard import Key, Controller as KeyboardController
+from routes.shortcut import parse_shortcut as _parse_keyboard_shortcut
 
 router = APIRouter()
 
@@ -101,29 +102,37 @@ def load_mappings():
         button_mappings = {}
         sequence_mappings = []
 
-# 预解析的快捷键缓存，避免每次都解析
-_shortcut_cache = {}
+def _safe_execute_shortcut(shortcut: str):
+    """用 shortcut.py 的全量 KEY_MAP 解析并执行快捷键。"""
+    keys = _parse_keyboard_shortcut(shortcut)
+    if not keys:
+        app_logger.error(f"快捷键解析返回空: {shortcut}", source="mouse_listener")
+        return
+    # macOS 上 ctrl → cmd，与前端提示一致（Command+V 粘贴而非 Ctrl+V）
+    if is_mac:
+        keys = [Key.cmd if k is Key.ctrl else k for k in keys]
+    if len(keys) == 1:
+        keyboard_controller.press(keys[0])
+        keyboard_controller.release(keys[0])
+    else:
+        modifiers = keys[:-1]
+        main_key = keys[-1]
+        with keyboard_controller.pressed(*modifiers):
+            keyboard_controller.press(main_key)
+            keyboard_controller.release(main_key)
 
-# 修饰键映射（按平台）
-_modifier_map = {
-    'ctrl': Key.ctrl, 'cmd': Key.cmd, 'alt': Key.alt,
-    'shift': Key.shift, 'win': Key.cmd,
-}
-if is_mac:
-    _modifier_map['ctrl'] = Key.cmd  # Mac 上 ctrl 常映射到 cmd
 
-# 特殊键映射（预定义）
-_special_keys = {
-    'enter': Key.enter, 'tab': Key.tab, 'space': Key.space,
-    'backspace': Key.backspace, 'delete': Key.delete,
-    'escape': Key.esc, 'esc': Key.esc,
-    'up': Key.up, 'down': Key.down, 'left': Key.left, 'right': Key.right,
-    'home': Key.home, 'end': Key.end,
-    'pageup': Key.page_up, 'pagedown': Key.page_down,
-    'f1': Key.f1, 'f2': Key.f2, 'f3': Key.f3, 'f4': Key.f4,
-    'f5': Key.f5, 'f6': Key.f6, 'f7': Key.f7, 'f8': Key.f8,
-    'f9': Key.f9, 'f10': Key.f10, 'f11': Key.f11, 'f12': Key.f12,
-}
+def execute_shortcut_fast(shortcut: str):
+    """快速执行快捷键或系统命令。复用 shortcut.py 的完整解析逻辑。"""
+    try:
+        shortcut = shortcut.strip().lower()
+        # 先检查是否是系统命令
+        if shortcut in _system_commands:
+            execute_system_command(shortcut)
+            return
+        _safe_execute_shortcut(shortcut)
+    except Exception as e:
+        app_logger.error(f"execute_shortcut_fast 失败: {shortcut!r} -> {e}", source="mouse_listener")
 
 # 系统命令映射（按平台）
 import subprocess
@@ -248,55 +257,6 @@ def execute_system_command(command_key: str) -> bool:
     except Exception:
         return False
 
-def _parse_shortcut(shortcut: str):
-    """解析快捷键（带缓存）"""
-    if shortcut in _shortcut_cache:
-        return _shortcut_cache[shortcut]
-    
-    keys = shortcut.lower().split('+')
-    modifiers = []
-    main_key = None
-    
-    for k in keys:
-        if k in _modifier_map:
-            modifiers.append(_modifier_map[k])
-        elif len(k) == 1:
-            main_key = k
-        else:
-            main_key = _special_keys.get(k, k)
-    
-    result = (modifiers, main_key)
-    _shortcut_cache[shortcut] = result
-    return result
-
-def execute_shortcut_fast(shortcut: str):
-    """快速执行快捷键或系统命令（无日志，直接执行）"""
-    try:
-        shortcut = shortcut.strip().lower()
-        
-        # 先检查是否是系统命令
-        if shortcut in _system_commands:
-            execute_system_command(shortcut)
-            return
-        
-        modifiers, main_key = _parse_shortcut(shortcut)
-        if main_key is None:
-            return
-        
-        # 按下修饰键
-        for mod in modifiers:
-            keyboard_controller.press(mod)
-        
-        # 按下并释放主键
-        keyboard_controller.press(main_key)
-        keyboard_controller.release(main_key)
-        
-        # 释放修饰键
-        for mod in reversed(modifiers):
-            keyboard_controller.release(mod)
-    except Exception as e:
-        app_logger.error(f"execute_shortcut_fast 失败: {shortcut!r} -> {e}", source="mouse_listener")
-
 
 def dispatch_shortcut_from_hook(shortcut: str):
     """
@@ -317,34 +277,16 @@ def dispatch_shortcut_from_hook(shortcut: str):
 
 
 def execute_shortcut(shortcut: str):
-    """执行快捷键或系统命令（带日志，用于调试）"""
+    """执行快捷键或系统命令（带日志，用于调试）。复用 shortcut.py 的完整解析逻辑。"""
     try:
         shortcut = shortcut.strip().lower()
-        
         # 先检查是否是系统命令
         if shortcut in _system_commands:
             execute_system_command(shortcut)
             return
-        
-        modifiers, main_key = _parse_shortcut(shortcut)
-        
-        if main_key is None:
-            app_logger.error(f"快捷键解析失败: {shortcut}", source="mouse_listener")
-            return
-        
         app_logger.info(f"执行快捷键: {shortcut}", source="mouse_listener")
-        
-        for mod in modifiers:
-            keyboard_controller.press(mod)
-        
-        keyboard_controller.press(main_key)
-        keyboard_controller.release(main_key)
-        
-        for mod in reversed(modifiers):
-            keyboard_controller.release(mod)
-            
+        _safe_execute_shortcut(shortcut)
         app_logger.info(f"快捷键执行完成: {shortcut}", source="mouse_listener")
-        
     except Exception as e:
         app_logger.error(f"执行快捷键失败: {e}", source="mouse_listener")
 

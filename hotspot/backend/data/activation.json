@@ -4,5 +4,8 @@
   "license_blob": "",
   "license_ever_activated": false,
   "trial_duration_seconds": 604800,
-  "clock_rollback_detected": false
+  "clock_rollback_detected": false,
+  "trial_started_at": 1778901729,
+  "trial_explicit_started": true,
+  "last_seen_at": 1778901840
 }
