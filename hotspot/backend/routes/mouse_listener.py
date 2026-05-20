@@ -23,7 +23,7 @@ from utils.logger import app_logger
 from utils.platform_utils import get_platform
 
 from pynput.keyboard import Key, Controller as KeyboardController
-from routes.shortcut import parse_shortcut as _parse_keyboard_shortcut
+from config import HTTP_PORT
 
 router = APIRouter()
 
@@ -102,37 +102,39 @@ def load_mappings():
         button_mappings = {}
         sequence_mappings = []
 
-def _safe_execute_shortcut(shortcut: str):
-    """用 shortcut.py 的全量 KEY_MAP 解析并执行快捷键。"""
-    keys = _parse_keyboard_shortcut(shortcut)
-    if not keys:
-        app_logger.error(f"快捷键解析返回空: {shortcut}", source="mouse_listener")
-        return
-    # macOS 上 ctrl → cmd，与前端提示一致（Command+V 粘贴而非 Ctrl+V）
-    if is_mac:
-        keys = [Key.cmd if k is Key.ctrl else k for k in keys]
-    if len(keys) == 1:
-        keyboard_controller.press(keys[0])
-        keyboard_controller.release(keys[0])
-    else:
-        modifiers = keys[:-1]
-        main_key = keys[-1]
-        with keyboard_controller.pressed(*modifiers):
-            keyboard_controller.press(main_key)
-            keyboard_controller.release(main_key)
-
-
 def execute_shortcut_fast(shortcut: str):
-    """快速执行快捷键或系统命令。复用 shortcut.py 的完整解析逻辑。"""
-    try:
-        shortcut = shortcut.strip().lower()
-        # 先检查是否是系统命令
-        if shortcut in _system_commands:
-            execute_system_command(shortcut)
-            return
-        _safe_execute_shortcut(shortcut)
-    except Exception as e:
-        app_logger.error(f"execute_shortcut_fast 失败: {shortcut!r} -> {e}", source="mouse_listener")
+    """
+    通过本地 HTTP 请求执行快捷键，与键盘走完全相同的 shortcut.py 路径。
+    避免 Quartz Event Tap 回调上下文中直接调 pynput 失效的问题。
+    """
+    if not shortcut or not shortcut.strip():
+        return
+    s = shortcut.strip().lower()
+
+    # 系统命令走原来的子进程路径
+    if s in _system_commands:
+        try:
+            execute_system_command(s)
+        except Exception as e:
+            app_logger.error(f"系统命令执行失败: {s!r} -> {e}", source="mouse_listener")
+        return
+
+    def _post():
+        try:
+            import json as _json
+            import urllib.request as _req
+            body = _json.dumps({"shortcut": s, "action_type": "single"}).encode()
+            r = _req.Request(
+                f"http://127.0.0.1:{HTTP_PORT}/api/shortcut/execute",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            _req.urlopen(r, timeout=5)
+        except Exception as e:
+            app_logger.error(f"HTTP 执行快捷键失败: {s!r} -> {e}", source="mouse_listener")
+
+    threading.Thread(target=_post, daemon=True).start()
 
 # 系统命令映射（按平台）
 import subprocess
@@ -277,16 +279,13 @@ def dispatch_shortcut_from_hook(shortcut: str):
 
 
 def execute_shortcut(shortcut: str):
-    """执行快捷键或系统命令（带日志，用于调试）。复用 shortcut.py 的完整解析逻辑。"""
+    """执行快捷键或系统命令（带日志，用于调试）。与 hook 走相同 HTTP 路径。"""
     try:
         shortcut = shortcut.strip().lower()
-        # 先检查是否是系统命令
         if shortcut in _system_commands:
             execute_system_command(shortcut)
             return
-        app_logger.info(f"执行快捷键: {shortcut}", source="mouse_listener")
-        _safe_execute_shortcut(shortcut)
-        app_logger.info(f"快捷键执行完成: {shortcut}", source="mouse_listener")
+        execute_shortcut_fast(shortcut)
     except Exception as e:
         app_logger.error(f"执行快捷键失败: {e}", source="mouse_listener")
 
